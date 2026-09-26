@@ -1,0 +1,51 @@
+{
+  "capture_timestamp": "2026-08-10T00:00:00Z",
+  "sources": {
+    "asset": {
+      "url": "https://horizon.stellar.org/assets?asset_code=AQUA&asset_issuer=GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
+      "captured_at": "2026-08-10T00:00:00Z"
+    },
+    "account": {
+      "url": "https://horizon.stellar.org/accounts/GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
+      "captured_at": "2026-08-10T00:00:00Z"
+    },
+    "stellar_toml": {
+      "url": "https://aqua.network/.well-known/stellar.toml",
+      "captured_at": "2026-08-10T00:00:00Z"
+    },
+    "directory": {
+      "url": "https://api.stellar.expert/explorer/directory/GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
+      "captured_at": "2026-08-10T00:00:00Z"
+    },
+    "blocked_domains": {
+      "url": "https://api.stellar.expert/explorer/directory/blocked-domains/aqua.network",
+      "captured_at": "2026-08-10T00:00:00Z"
+    }
+  },
+  "expected": {
+    "base": "clear",
+    "severity": "clear",
+    "escalated": false,
+    "accountability": "verified"
+  },
+  "per_check": {
+    "capability": {
+      "undetermined": false,
+      "severity": "clear"
+    },
+    "mutability": {
+      "undetermined": false,
+      "severity": "clear"
+    },
+    "sep1-domain": {
+      "undetermined": false,
+      "severity": "clear"
+    },
+    "reputation": {
+      "undetermined": false,
+      "severity": "clear",
+      "escalation": true
+    }
+  },
+  "why": "no auth flags at all: the issuer has no power over holders, and a reciprocal domain confirms who it is"
+}
