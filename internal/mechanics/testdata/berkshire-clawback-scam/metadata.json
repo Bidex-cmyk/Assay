@@ -1,0 +1,55 @@
+{
+  "capture_timestamp": "2026-08-10T00:00:00Z",
+  "sources": {
+    "asset": {
+      "url": "https://horizon.stellar.org/assets?asset_code=BERKSHIRE&asset_issuer=GA22QHSHQEHDJS2ZOINSC77XPPQ24G5EFRJGVEIZLKC5FAW3PQ5XNSDQ",
+      "captured_at": "2026-08-10T00:00:00Z"
+    },
+    "account": {
+      "url": "https://horizon.stellar.org/accounts/GA22QHSHQEHDJS2ZOINSC77XPPQ24G5EFRJGVEIZLKC5FAW3PQ5XNSDQ",
+      "captured_at": "2026-08-10T00:00:00Z"
+    },
+    "stellar_toml": {
+      "url": "https://nasdaq.finance/.well-known/stellar.toml",
+      "captured_at": "2026-08-10T00:00:00Z",
+      "status": "000"
+    },
+    "directory": {
+      "url": "https://api.stellar.expert/explorer/directory/GA22QHSHQEHDJS2ZOINSC77XPPQ24G5EFRJGVEIZLKC5FAW3PQ5XNSDQ",
+      "captured_at": "2026-08-10T00:00:00Z"
+    },
+    "blocked_domains": {
+      "url": "https://api.stellar.expert/explorer/directory/blocked-domains/nasdaq.finance",
+      "captured_at": "2026-08-10T00:00:00Z"
+    }
+  },
+  "expected": {
+    "base": "high",
+    "severity": "critical",
+    "escalated": true,
+    "accountability": "unverified"
+  },
+  "per_check": {
+    "capability": {
+      "undetermined": false,
+      "severity": "high",
+      "mechanics": "auth_revocable|auth_clawback_enabled"
+    },
+    "mutability": {
+      "undetermined": false,
+      "severity": "clear"
+    },
+    "sep1-domain": {
+      "undetermined": false,
+      "severity": "clear",
+      "mechanics": "domain_unverified"
+    },
+    "reputation": {
+      "undetermined": false,
+      "severity": "critical",
+      "escalation": true,
+      "mechanics": "blocklisted"
+    }
+  },
+  "why": "impersonation asset with clawback: capability alone puts it at high, and the curated malicious tag escalates it to critical"
+}
