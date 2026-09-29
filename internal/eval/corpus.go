@@ -210,6 +210,139 @@ func Corpus(fixturesDir ...string) []Label {
 		"usdc-revocable-regulated",
 		"berkshire-clawback-scam",
 		"doge-noflags-scam",
+// The per-check labels are derived from the same fixtures the aggregate labels
+// are, so the two cannot describe different runs: TestEval and TestEvalPerCheck
+// both iterate this corpus.
+func Corpus() []Label {
+	return []Label{
+		{
+			Dir: "aqua-clear-verified",
+			Why: "no auth flags at all: the issuer has no power over holders, and a " +
+				"reciprocal domain confirms who it is",
+			Base:           mechanics.Clear,
+			Severity:       mechanics.Clear,
+			Accountability: mechanics.AccountabilityVerified,
+			Checks: map[string]CheckLabel{
+				"capability":  {Severity: mechanics.Clear},
+				"mutability":  {Severity: mechanics.Clear},
+				"sep1-domain": {Severity: mechanics.Clear},
+				"reputation":  {Severity: mechanics.Clear, Escalation: true},
+			},
+		},
+		{
+			Dir: "shx-clear-flagslocked",
+			Why: "no auth flags AND auth_immutable: the issuer can never add freeze " +
+				"or clawback later",
+			Base:           mechanics.Clear,
+			Severity:       mechanics.Clear,
+			Accountability: mechanics.AccountabilityVerified,
+			Checks: map[string]CheckLabel{
+				"capability":  {Severity: mechanics.Clear},
+				"mutability":  {Severity: mechanics.Clear, Mechanics: mechanics.MechFlagsLocked},
+				"sep1-domain": {Severity: mechanics.Clear},
+				"reputation":  {Severity: mechanics.Clear, Escalation: true},
+			},
+		},
+		{
+			Dir: "xrp-clear-unlocked",
+			Why: "the unlocked counterpart to SHX: no auth flags, but auth_immutable " +
+				"is UNSET. The mutability finding must report that without moving " +
+				"base severity off clear.",
+			Base:           mechanics.Clear,
+			Severity:       mechanics.Clear,
+			Accountability: mechanics.AccountabilityVerified,
+			Checks: map[string]CheckLabel{
+				"capability":  {Severity: mechanics.Clear},
+				"mutability":  {Severity: mechanics.Clear},
+				"sep1-domain": {Severity: mechanics.Clear},
+				"reputation":  {Severity: mechanics.Clear, Escalation: true},
+			},
+		},
+		{
+			Dir: "usdz-clawback-regulated",
+			Why: "the confirmed-legitimate clawback control asset (docs/eval.md " +
+				"coverage-gaps). USDZ (Zeam Money, zeam.money) carries both " +
+				"auth_revocable and auth_clawback_enabled, so capability alone " +
+				"puts it at high — and it must NOT be escalated: the domain " +
+				"publishes a reciprocal stellar.toml that names the exact issuer, " +
+				"the directory tag is 'issuer' (not 'malicious'), and no " +
+				"blocklist entry exists. The severity model's central claim is " +
+				"that it treats legitimate clawback fairly; this subject is the " +
+				"only one in the set that measures that claim.",
+			Base:           mechanics.High,
+			Severity:       mechanics.High,
+			Escalated:      false,
+			Accountability: mechanics.AccountabilityVerified,
+			Checks: map[string]CheckLabel{
+				"capability": {
+					Severity:  mechanics.High,
+					Mechanics: mechanics.MechAuthRevocable | mechanics.MechClawbackEnabled,
+				},
+				"mutability":  {Severity: mechanics.Clear},
+				"sep1-domain": {Severity: mechanics.Clear},
+				"reputation":  {Severity: mechanics.Clear, Escalation: true},
+			},
+		},
+		{
+			Dir: "usdc-revocable-regulated",
+			Why: "a real regulated stablecoin that legitimately uses auth_revocable. It " +
+				"must report freeze-capable (medium) on the strength of the flag alone.",
+			Base:           mechanics.Medium,
+			Severity:       mechanics.Medium,
+			Accountability: mechanics.AccountabilityUnverified,
+			Checks: map[string]CheckLabel{
+				"capability": {Severity: mechanics.Medium, Mechanics: mechanics.MechAuthRevocable},
+				"mutability": {Severity: mechanics.Clear},
+				// circle.com does not serve a stellar.toml, so the reciprocal
+				// claim genuinely fails and the unverified bit is set.
+				"sep1-domain": {Severity: mechanics.Clear, Mechanics: mechanics.MechDomainUnverified},
+				"reputation":  {Severity: mechanics.Clear, Escalation: true},
+			},
+		},
+		{
+			Dir: "berkshire-clawback-scam",
+			Why: "impersonation asset with clawback: capability alone puts it at high, " +
+				"and the curated malicious tag escalates it to critical",
+			Base:           mechanics.High,
+			Severity:       mechanics.Critical,
+			Escalated:      true,
+			Accountability: mechanics.AccountabilityUnverified,
+			Checks: map[string]CheckLabel{
+				"capability": {
+					Severity:  mechanics.High,
+					Mechanics: mechanics.MechAuthRevocable | mechanics.MechClawbackEnabled,
+				},
+				"mutability":  {Severity: mechanics.Clear},
+				"sep1-domain": {Severity: mechanics.Clear, Mechanics: mechanics.MechDomainUnverified},
+				"reputation": {
+					Severity:   mechanics.Critical,
+					Escalation: true,
+					Mechanics:  mechanics.MechBlocklisted,
+				},
+			},
+		},
+		{
+			Dir: "doge-noflags-scam",
+			Why: "the case that justifies keeping reputation as a separate upward-only " +
+				"axis: a known scam asset carrying NO auth flags. Capability is honestly " +
+				"clear, and escalation is the only thing that catches it. This is also " +
+				"the fixture the check-suppression test uses, because it is the case " +
+				"with the largest consequence.",
+			Base:           mechanics.Clear,
+			Severity:       mechanics.Critical,
+			Escalated:      true,
+			Accountability: mechanics.AccountabilityUnverified,
+			Checks: map[string]CheckLabel{
+				"capability":  {Severity: mechanics.Clear},
+				"mutability":  {Severity: mechanics.Clear},
+				"sep1-domain": {Severity: mechanics.Clear, Mechanics: mechanics.MechDomainUnverified},
+				"reputation": {
+					Severity:   mechanics.Critical,
+					Escalation: true,
+					Mechanics:  mechanics.MechBlocklisted,
+				},
+			},
+		},
 	}
 
 	fd := "../mechanics/testdata"
