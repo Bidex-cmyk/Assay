@@ -1466,6 +1466,89 @@ fn attest_many_is_all_or_nothing_over_generated_batches() {
     );
 }
 
+/// `transfer_admin` publishes exactly one `admin_transfer_proposed` event:
+/// the proposing admin is a topic, the proposed successor and the timestamp
+/// are in the data map, and the admin role itself is unchanged.
+#[test]
+fn transfer_admin_emits_admin_transfer_proposed() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(SafetyRegistry, ());
+    let client = SafetyRegistryClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    client.init(&admin);
+
+    env.ledger().set_timestamp(4_321);
+    client.transfer_admin(&new_admin);
+
+    let mut data = Map::<Symbol, soroban_sdk::Val>::new(&env);
+    data.set(Symbol::new(&env, "at"), 4_321u64.into_val(&env));
+    data.set(Symbol::new(&env, "new_admin"), new_admin.clone().into_val(&env));
+    assert_eq!(
+        env.events().all().filter_by_contract(&client.address),
+        vec![
+            &env,
+            (
+                client.address.clone(),
+                (Symbol::new(&env, "admin_transfer_proposed"), admin.clone()).into_val(&env),
+                data.into_val(&env),
+            ),
+        ],
+    );
+
+    let stored_pending: Option<Address> = env.as_contract(&client.address, || {
+        env.storage().instance().get(&DataKey::PendingAdmin)
+    });
+    assert_eq!(stored_pending, Some(new_admin));
+    let stored_admin: Address = env.as_contract(&client.address, || {
+        env.storage().instance().get(&DataKey::Admin).expect("admin unchanged")
+    });
+    assert_eq!(stored_admin, admin);
+}
+
+/// `accept_admin` publishes exactly one `admin_transferred` event: the
+/// replaced admin is a topic, the new admin and the timestamp are in the data
+/// map, the pending entry is cleared, and the new admin is stored.
+#[test]
+fn accept_admin_emits_admin_transferred() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register(SafetyRegistry, ());
+    let client = SafetyRegistryClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let new_admin = Address::generate(&env);
+    client.init(&admin);
+    client.transfer_admin(&new_admin);
+
+    env.ledger().set_timestamp(4_321);
+    client.accept_admin();
+
+    let mut data = Map::<Symbol, soroban_sdk::Val>::new(&env);
+    data.set(Symbol::new(&env, "at"), 4_321u64.into_val(&env));
+    data.set(Symbol::new(&env, "new_admin"), new_admin.clone().into_val(&env));
+    assert_eq!(
+        env.events().all().filter_by_contract(&client.address),
+        vec![
+            &env,
+            (
+                client.address.clone(),
+                (Symbol::new(&env, "admin_transferred"), admin.clone()).into_val(&env),
+                data.into_val(&env),
+            ),
+        ],
+    );
+
+    let stored_admin: Address = env.as_contract(&client.address, || {
+        env.storage().instance().get(&DataKey::Admin).expect("new admin stored")
+    });
+    assert_eq!(stored_admin, new_admin);
+    let stored_pending: Option<Address> = env.as_contract(&client.address, || {
+        env.storage().instance().get(&DataKey::PendingAdmin)
+    });
+    assert_eq!(stored_pending, None);
+}
+
 // ---------------------------------------------------------------------------
 // Interface version (#332) and batch read (#331)
 // ---------------------------------------------------------------------------
@@ -1480,7 +1563,7 @@ fn version_returns_interface_version() {
 /// a deliberate ABI change, which must be mirrored in docs/contract-interface.md.
 #[test]
 fn interface_version_is_abi() {
-    assert_eq!(INTERFACE_VERSION, 1);
+    assert_eq!(INTERFACE_VERSION, 2);
 }
 
 /// Results come back in the order the assets were asked for, and an asset that

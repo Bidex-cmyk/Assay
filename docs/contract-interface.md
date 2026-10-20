@@ -58,7 +58,7 @@ pub const MAX_BATCH_SIZE: u32 = 50;
 
 /// The contract's interface version, bumped on every ABI change. See
 /// "Interface versioning" below for the bump rule.
-pub const INTERFACE_VERSION: u32 = 1;
+pub const INTERFACE_VERSION: u32 = 2;
 
 pub fn get_safety(env: Env, asset: Address) -> Option<Safety>;
 pub fn version(env: Env) -> u32;
@@ -82,7 +82,7 @@ struct is a supported argument type in soroban-sdk 27.
 ## Interface versioning
 
 `version()` is a read-only entrypoint that returns the contract's interface
-version (`INTERFACE_VERSION`), currently `1`. A consumer or a drift script can
+version (`INTERFACE_VERSION`), currently `2`. A consumer or a drift script can
 call it to ask "what is this contract?" instead of inferring the interface from
 a wasm hash.
 
@@ -98,7 +98,8 @@ a wasm hash.
   `get_safety` caller), and documentation-only changes.
 
 Adding `version()` itself establishes version 1: the interface as of this
-build is version 1, and the first ABI change after it bumps to 2. The constant
+build is version 1; version 2 adds the `admin_transfer_proposed` and
+`admin_transferred` events so admin-role changes are observable. The constant
 is an ABI value and is parsed by the Go ABI drift test, so it cannot drift from
 the deployed interface without a red build.
 
@@ -306,10 +307,13 @@ The errors specific to this path are typed rather than silent:
 | `accept_admin` | no pending transfer | `NoPendingAdmin` (6) |
 | `accept_admin` | caller is not the pending admin | `require_auth` failure; nothing changes |
 
-Neither entrypoint publishes an event, so an admin change is not visible in the
-`attest`/`revoke` event stream; the new admin's first write is the first on-chain
-trace. A transfer moves the admin role only — the stored attestations are
-untouched and `get_safety` keeps serving them across it.
+`transfer_admin` publishes an `admin_transfer_proposed` event (topic: the
+proposing admin; data: the proposed successor and the ledger timestamp) and
+`accept_admin` publishes an `admin_transferred` event (topic: the replaced
+admin; data: the new admin and the ledger timestamp), so every admin-role
+change is visible in the event stream. A transfer moves the admin role only —
+the stored attestations are untouched and `get_safety` keeps serving them
+across it.
 
 **The live testnet deployment predates both entrypoints.**
 `CBK4FBIH…` was deployed on 2026-08-15, before `transfer_admin` and
@@ -351,6 +355,9 @@ happen.
 | --- | --- | --- |
 | `symbol_short!("attest")` | asset `Address` | `Map<Symbol, Val>` with keys `severity: u32`, `flags: u32`, `attested_at: u64` |
 | `symbol_short!("revoke")` | asset `Address` | `Map<Symbol, Val>` with key `revoked_at: u64` |
+| `Symbol::new(env, \"admin_transfer_proposed\")` | old admin `Address` | `Map<Symbol, Val>` with keys `new_admin: Address`, `at: u64` |
+| `Symbol::new(env, \"admin_transferred\")` | old admin `Address` | `Map<Symbol, Val>` with keys `new_admin: Address`, `at: u64` |
+
 
 `attest_many` publishes one such `attest` event per element, in batch order,
 with no batch-specific event or decoding path. A rejected batch publishes
@@ -361,8 +368,8 @@ unauthorized) publishes nothing. The `revoke` event uses the same topic layout
 as `attest`, so an indexer subscribed by asset sees both the write and its
 withdrawal.
 
-The events are defined with the `#[contractevent]` macro on the `Attested` and
-`Revoked` structs
+The events are defined with the `#[contractevent]` macro on the `Attested`,
+`Revoked`, `AdminTransferProposed`, and `AdminTransferred` structs
 in the contract (see `assay-contracts/contracts/safety-registry/src/lib.rs`),
 so the schema is discoverable from the contract spec rather than only from
 this document.
@@ -371,6 +378,14 @@ The asset address is a topic rather than a data-map field so an indexer can
 subscribe by asset without decoding every event body. The topic count is two,
 well within the SDK's four-topic limit, and `Symbol` is the required
 topic-0 shape for a filterable label.
+
+### Event budget impact
+
+Both admin-transfer events carry two addresses and a timestamp. They are
+published once per single (non-batched) admin call, so they do not affect the
+`attest_many` event budget; that cap is measured separately by
+`batch_size_bound_is_measured_and_holds_headroom` and leaves headroom for the
+event schema to grow.
 
 Severity values and mechanic bit positions are **ABI** and mirror
 `internal/mechanics` exactly. Do not renumber them.
