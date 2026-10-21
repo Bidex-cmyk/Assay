@@ -311,8 +311,8 @@ func runVerify(args []string) error {
 	asJSON := fs.Bool("json", false, "print the verdict as JSON for scripting")
 	bundlePath := fs.String("bundle", "",
 		"verify an offline attestation bundle instead of a live scan (cannot be combined with -max-age)")
-	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("verify: %w", err)
+	if err := parseFlags(fs, args); err != nil {
+		return err
 	}
 	if *bundlePath != "" {
 		if fs.NArg() != 0 {
@@ -336,7 +336,7 @@ func runVerify(args []string) error {
 		return nil
 	}
 	if fs.NArg() != 1 {
-		return fmt.Errorf("verify takes exactly one asset (CODE-ISSUER)")
+		return usagef("verify takes exactly one asset (CODE-ISSUER)")
 	}
 	asset, err := scan.ParseAsset(fs.Arg(0))
 	if err != nil {
