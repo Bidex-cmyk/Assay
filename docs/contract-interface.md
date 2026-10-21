@@ -71,6 +71,7 @@ pub fn revoke(env: Env, asset: Address) -> Result<(), Error>;
 pub fn init(env: Env, admin: Address) -> Result<(), Error>;
 pub fn transfer_admin(env: Env, new_admin: Address) -> Result<(), Error>;
 pub fn accept_admin(env: Env) -> Result<(), Error>;
+pub fn cancel_admin_transfer(env: Env) -> Result<(), Error>;
 ```
 
 The `Vec<Attestation>` argument is confirmed against the built artifact rather
@@ -97,20 +98,19 @@ a wasm hash.
   safely ignore (a new `get_safety_many` does not break an existing
   `get_safety` caller), and documentation-only changes.
 
-Adding `version()` itself establishes version 1: the interface as of this
-build is version 1; version 2 adds the `admin_transfer_proposed` and
-`admin_transferred` events so admin-role changes are observable. The constant
-is an ABI value and is parsed by the Go ABI drift test, so it cannot drift from
-the deployed interface without a red build.
+Adding `version()` itself establishes version 1: the interface as of that
+build is version 1. Version 2 adds `cancel_admin_transfer` and the
+`cancel_admin` event. The constant is an ABI value and is parsed by the Go ABI
+drift test, so it cannot drift from the deployed interface without a red build.
 
 | Error | Code | Returned by |
 | --- | --- | --- |
 | `AlreadyInitialized` | 1 | `init` on an initialized contract |
-| `NotInitialized` | 2 | `attest`, `attest_many`, `revoke`, `transfer_admin` before `init` |
+| `NotInitialized` | 2 | `attest`, `attest_many`, `revoke`, `transfer_admin`, `cancel_admin_transfer` before `init` |
 | `InvalidSeverity` | 3 | `attest`, `attest_many` with severity above 4 |
 | `InconsistentAttestation` | 4 | `attest`, `attest_many` with the clawback bit below `SEVERITY_HIGH` |
 | `NotAttested` | 5 | `revoke` for an asset with no attestation |
-| `NoPendingAdmin` | 6 | `accept_admin` with no pending transfer |
+| `NoPendingAdmin` | 6 | `accept_admin` or `cancel_admin_transfer` with no pending transfer |
 | `BatchTooLarge` | 7 | `attest_many` with more than `MAX_BATCH_SIZE` elements |
 
 ### `attest_many`: many attestations in one transaction
@@ -297,6 +297,12 @@ stranger:
   the address recorded by `transfer_admin`). It promotes that address to admin,
   clears the pending entry, and completes the transfer. After this the old
   admin can no longer `attest`, `revoke`, or start another transfer.
+- **`cancel_admin_transfer()`** — authorized by the **current admin**
+  (`require_auth` on the stored admin). It clears the pending entry, leaves the
+  current admin in place, and publishes an `AdminTransferCancelled` event. This
+  is how a proposal to a wrong or compromised address is withdrawn instead of
+  merely overwritten: after cancelling, the old pending address cannot accept,
+  because there is no longer a pending admin.
 
 The errors specific to this path are typed rather than silent:
 
@@ -306,20 +312,23 @@ The errors specific to this path are typed rather than silent:
 | `transfer_admin` | caller is not the current admin | `require_auth` failure; nothing changes |
 | `accept_admin` | no pending transfer | `NoPendingAdmin` (6) |
 | `accept_admin` | caller is not the pending admin | `require_auth` failure; nothing changes |
+| `cancel_admin_transfer` | before `init` | `NotInitialized` (2) |
+| `cancel_admin_transfer` | caller is not the current admin | `require_auth` failure; nothing changes |
+| `cancel_admin_transfer` | no pending transfer | `NoPendingAdmin` (6) |
 
-`transfer_admin` publishes an `admin_transfer_proposed` event (topic: the
-proposing admin; data: the proposed successor and the ledger timestamp) and
-`accept_admin` publishes an `admin_transferred` event (topic: the replaced
-admin; data: the new admin and the ledger timestamp), so every admin-role
-change is visible in the event stream. A transfer moves the admin role only —
-the stored attestations are untouched and `get_safety` keeps serving them
-across it.
+`transfer_admin` and `accept_admin` do not publish events, so those steps are
+not visible in the `attest`/`revoke` event stream; the new admin's first write
+is the first on-chain trace. `cancel_admin_transfer` publishes one
+`AdminTransferCancelled` event (see "Attestation events" below) so a withdrawn
+handover is observable. A transfer or cancellation moves the admin role only —
+the stored attestations are untouched and `get_safety` keeps serving them.
 
-**The live testnet deployment predates both entrypoints.**
-`CBK4FBIH…` was deployed on 2026-08-15, before `transfer_admin` and
-`accept_admin` existed, and it has no upgrade entrypoint to receive them.
-Calling either against the live contract fails as an unknown entrypoint, and
-rotating the live admin still means a new deployment and re-attestation — see
+**The live testnet deployment predates all three entrypoints.**
+`CBK4FBIH…` was deployed on 2026-08-15, before `transfer_admin`,
+`accept_admin`, and `cancel_admin_transfer` existed, and it has no upgrade
+entrypoint to receive them. Calling any of them against the live contract fails
+as an unknown entrypoint, and rotating the live admin still means a new deployment
+and re-attestation — see
 [deployment.md](deployment.md#admin-transfer-and-rotation) and
 [attester-key.md](attester-key.md#rotation).
 
@@ -355,9 +364,7 @@ happen.
 | --- | --- | --- |
 | `symbol_short!("attest")` | asset `Address` | `Map<Symbol, Val>` with keys `severity: u32`, `flags: u32`, `attested_at: u64` |
 | `symbol_short!("revoke")` | asset `Address` | `Map<Symbol, Val>` with key `revoked_at: u64` |
-| `Symbol::new(env, \"admin_transfer_proposed\")` | old admin `Address` | `Map<Symbol, Val>` with keys `new_admin: Address`, `at: u64` |
-| `Symbol::new(env, \"admin_transferred\")` | old admin `Address` | `Map<Symbol, Val>` with keys `new_admin: Address`, `at: u64` |
-
+| `Symbol::new(env, "cancel_admin")` | pending admin `Address` | `Map<Symbol, Val>` with key `cancelled_at: u64` |
 
 `attest_many` publishes one such `attest` event per element, in batch order,
 with no batch-specific event or decoding path. A rejected batch publishes
@@ -368,8 +375,13 @@ unauthorized) publishes nothing. The `revoke` event uses the same topic layout
 as `attest`, so an indexer subscribed by asset sees both the write and its
 withdrawal.
 
+A successful `cancel_admin_transfer` publishes the third row. A rejected cancel
+(`NoPendingAdmin`, unauthorized) publishes nothing. The pending address is a
+topic so an indexer can filter for the withdrawn proposal without decoding the
+data map.
+
 The events are defined with the `#[contractevent]` macro on the `Attested`,
-`Revoked`, `AdminTransferProposed`, and `AdminTransferred` structs
+`Revoked`, and `AdminTransferCancelled` structs
 in the contract (see `assay-contracts/contracts/safety-registry/src/lib.rs`),
 so the schema is discoverable from the contract spec rather than only from
 this document.
@@ -509,7 +521,8 @@ otherwise. Distinguishing them would mean storing a marker, which is the
 history/audit question ([#92](https://github.com/use-assay/Assay/issues/92)), not
 revocation.
 
-Revocation publishes no event; the event schema is still attestation writes only.
+Revocation publishes a `revoke` event; see "Attestation events" above for its
+topic layout and the other event schemas.
 
 ## Using it
 
