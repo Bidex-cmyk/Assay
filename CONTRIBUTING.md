@@ -448,6 +448,25 @@ If the corpus of safety-critical branches grows to the point that the manual
 run is skipped in practice, reopen the decision — a standing measurement that
 nobody runs is worse than none.
 
+## Changelog
+
+[CHANGELOG.md](CHANGELOG.md) records the history of the four surfaces that
+move independently: the evidence encoding (`evidence_hash` preimage versions),
+the contract ABI, the CLI and HTTP API, and the deployments.
+
+If your PR changes one of those surfaces, add a dated entry at the top of the
+matching section in the same PR. An entry is one bullet: the date it lands,
+what changed, and the issue or PR that decided it — match the style of the
+entries already there. Two rules the file states and a review will enforce:
+
+- **An ABI entry is not a deployment entry.** Adding an entrypoint changes
+  the source; the contracts on testnet change only when a redeploy is
+  recorded under Deployments. Record the level your PR actually changed.
+- **A preimage entry never rewrites history.** New encoding versions add a
+  tag; bytes written under an older tag keep meaning what they meant. If
+  your change would make an existing tag mean something new, that is the
+  bug, not a changelog entry.
+
 ## Commits
 
 Present tense, explain the why when it isn't obvious. Keep unrelated changes
