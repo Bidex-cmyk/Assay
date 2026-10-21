@@ -77,11 +77,23 @@ Go development requires Go 1.26.9 or later. The `go` directive in
 `go.mod` is the source of truth for the minimum version.
 
 ```sh
+make help     # list every target and what it does
+make doctor   # compare the local toolchain with the repo's pins (read-only)
 make test     # tests with -race -shuffle=on
 make lint     # golangci-lint
 make cover    # per-package coverage table, lowest first
 make run      # start the API on :8080
 ```
+
+`make` with no target prints the same help. `make doctor` reports OK or
+MISMATCH for Go, rustc, the wasm target, the `stellar` CLI and ShellCheck; a
+MISMATCH names both the pinned and the installed version, and the check never
+installs anything.
+
+A dev container definition lives in [.devcontainer](.devcontainer). It installs
+Go, the Rust channel and targets from `assay-contracts/rust-toolchain.toml`,
+and the `stellar` CLI version from the toolchain table below, so the versions
+are read from the repo's pins rather than repeated in the container file.
 
 Shell scripts are checked with ShellCheck at warning severity in CI. Run the
 same check locally from the repository root:
@@ -138,16 +150,14 @@ source. Three versions decide the optimized bytes:
 | Rust target | `wasm32v1-none` |
 | `soroban-sdk` | 27.0.5 |
 
-**The Rust compiler channel is not pinned.** There is no
-`assay-contracts/rust-toolchain.toml` yet ([#127](https://github.com/use-assay/Assay/issues/127)),
-so `rustup` selects whichever channel happens to be installed, and the
-compiler version changes the optimized bytes: the same source under the same
-`stellar` CLI hashes differently on rustc 1.95.0 and rustc 1.98.1. Until that
-pin exists, a build here cannot be expected to reproduce a hash recorded in
-[docs/deployment.md](docs/deployment.md), and `make verify-wasm` reports
-`unpinned` and exits 2 rather than guessing — see
-[docs/deployment.md](docs/deployment.md#does-the-source-still-build-what-is-deployed).
-Check the environment before any contract work:
+The Rust compiler channel is pinned in
+`assay-contracts/rust-toolchain.toml`, together with the `rustfmt` and `clippy`
+components and the `wasm32v1-none` target. `rustup` reads that file for every
+command run under `assay-contracts/`, so CI and a local checkout build with the
+same compiler; a version change is a deliberate commit rather than whatever
+`stable` happens to be. The compiler version changes the optimized bytes: the
+same source under the same `stellar` CLI hashes differently on rustc 1.95.0 and
+rustc 1.98.1. Check the environment before any contract work:
 
 ```sh
 stellar --version && rustup target list --installed && make build-contract
