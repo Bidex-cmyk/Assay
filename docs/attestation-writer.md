@@ -299,7 +299,7 @@ asks for maintainer sign-off on exactly that scope boundary.
   `SetTrustLineFlagsOp` can unset `TRUSTLINE_CLAWBACK_ENABLED_FLAG` but cannot
   add it retroactively), so a *newly-set* issuer clawback flag does not reach
   existing trustlines. This is the fact
-  [freshness.md](freshness.md#the-exposure-window-stated-honestly) is built
+  [freshness.md](freshness.md#recommended-windows) is built
   on. Confirmed against both the live pubnet and testnet ledgers (~5 s close
   cadence, 2026-09-25) that Horizon serves ledger state in real time.
 

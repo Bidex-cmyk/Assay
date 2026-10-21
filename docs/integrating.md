@@ -30,7 +30,7 @@ So you are trusting the attester. Today that is one key. `evidence_hash` is what
 makes the trust checkable rather than absolute: it commits to the exact evidence
 the scanner read, and anyone can re-scan and recompute it. The complete
 statement of what the admin key can and cannot do is in [Trust boundary: the
-admin key](contract-interface.md#trust-boundary-the-admin-key).
+admin key](attester-key.md#what-an-attacker-with-the-key-can-and-cannot-do).
 
 For a complete breakdown of every party you are trusting (issuer, attester key,
 Horizon, and reputation providers) and the consequences if each is dishonest or
@@ -478,7 +478,7 @@ longer than your RPC's window. The registry's own retention note is in
   contract refuses nearly every asset on the network.
 - **One key can write any attestation.** There is no multisig and no threshold
   of independent attesters yet. The complete statement of powers and limits is
-  in [Trust boundary: the admin key](contract-interface.md#trust-boundary-the-admin-key).
+  in [Trust boundary: the admin key](attester-key.md#what-an-attacker-with-the-key-can-and-cannot-do).
 - **Nothing refreshes the attestations.** They are exactly as fresh as their
   `attested_at`. Choose a `max_age_secs` you would actually accept.
 - Testnet is periodically reset, which removes these attestations. The live
