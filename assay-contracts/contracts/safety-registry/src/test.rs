@@ -1562,7 +1562,10 @@ fn transfer_admin_emits_admin_transfer_proposed() {
 
     let mut data = Map::<Symbol, soroban_sdk::Val>::new(&env);
     data.set(Symbol::new(&env, "at"), 4_321u64.into_val(&env));
-    data.set(Symbol::new(&env, "new_admin"), new_admin.clone().into_val(&env));
+    data.set(
+        Symbol::new(&env, "new_admin"),
+        new_admin.clone().into_val(&env),
+    );
     assert_eq!(
         env.events().all().filter_by_contract(&client.address),
         vec![
@@ -1580,7 +1583,10 @@ fn transfer_admin_emits_admin_transfer_proposed() {
     });
     assert_eq!(stored_pending, Some(new_admin));
     let stored_admin: Address = env.as_contract(&client.address, || {
-        env.storage().instance().get(&DataKey::Admin).expect("admin unchanged")
+        env.storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("admin unchanged")
     });
     assert_eq!(stored_admin, admin);
 }
@@ -1604,7 +1610,10 @@ fn accept_admin_emits_admin_transferred() {
 
     let mut data = Map::<Symbol, soroban_sdk::Val>::new(&env);
     data.set(Symbol::new(&env, "at"), 4_321u64.into_val(&env));
-    data.set(Symbol::new(&env, "new_admin"), new_admin.clone().into_val(&env));
+    data.set(
+        Symbol::new(&env, "new_admin"),
+        new_admin.clone().into_val(&env),
+    );
     assert_eq!(
         env.events().all().filter_by_contract(&client.address),
         vec![
@@ -1618,7 +1627,10 @@ fn accept_admin_emits_admin_transferred() {
     );
 
     let stored_admin: Address = env.as_contract(&client.address, || {
-        env.storage().instance().get(&DataKey::Admin).expect("new admin stored")
+        env.storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .expect("new admin stored")
     });
     assert_eq!(stored_admin, new_admin);
     let stored_pending: Option<Address> = env.as_contract(&client.address, || {
