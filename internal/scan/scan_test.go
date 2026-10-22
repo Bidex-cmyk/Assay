@@ -17,6 +17,16 @@ import (
 	"github.com/use-assay/assay/internal/sep1"
 )
 
+// horizonFlagsStub is the flags object a real Horizon record always carries:
+// all four authorization flags. An empty {} would be a malformed response,
+// which the client now refuses rather than reading as all-false (#290).
+var horizonFlagsStub = map[string]bool{
+	"auth_required":         false,
+	"auth_revocable":        false,
+	"auth_immutable":        false,
+	"auth_clawback_enabled": false,
+}
+
 func TestParseAsset(t *testing.T) {
 	const issuer = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
 
@@ -119,7 +129,7 @@ func newFakeSources(t *testing.T) *fakeSources {
 						"asset_type":   "credit_alphanum4",
 						"asset_code":   "USDC",
 						"asset_issuer": scanIssuer,
-						"flags":        map[string]bool{},
+						"flags":        horizonFlagsStub,
 					}},
 				},
 			})
@@ -127,7 +137,7 @@ func newFakeSources(t *testing.T) *fakeSources {
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"account_id":  scanIssuer,
 				"home_domain": scanHomeDom,
-				"flags":       map[string]bool{},
+				"flags":       horizonFlagsStub,
 			})
 		default:
 			http.NotFound(w, r)
@@ -547,14 +557,14 @@ func TestSubjectRecordsSkippedBlocklistWhenNoHomeDomain(t *testing.T) {
 					"asset_type":   "credit_alphanum4",
 					"asset_code":   "USDC",
 					"asset_issuer": scanIssuer,
-					"flags":        map[string]bool{},
+					"flags":        horizonFlagsStub,
 				}}},
 			})
 		case "/accounts/" + scanIssuer:
 			// No home_domain at all — the VELO shape.
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"account_id": scanIssuer,
-				"flags":      map[string]bool{},
+				"flags":      horizonFlagsStub,
 			})
 		default:
 			http.NotFound(w, r)

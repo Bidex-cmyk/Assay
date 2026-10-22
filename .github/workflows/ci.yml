@@ -368,11 +368,16 @@ jobs:
         run: ./scripts/check-codeowners.sh
 
       - name: check maintainer-owned paths
+        env:
+          # The gate's test-vector digest rule accepts an explicit maintainer
+          # label as an alternative to a PreimageVersion bump (#286), so the
+          # PR's labels travel with the invocation.
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ' ') }}
         run: |
           BASE=$(git merge-base origin/${{ github.base_ref }} ${{ github.event.pull_request.head.sha }})
 
           set +e
-          out=$(./scripts/merge-gate.sh "$BASE" ${{ github.event.pull_request.head.sha }} 2>&1)
+          out=$(MERGE_GATE_LABELS="$PR_LABELS" ./scripts/merge-gate.sh "$BASE" ${{ github.event.pull_request.head.sha }} 2>&1)
           rc=$?
           set -e
 
