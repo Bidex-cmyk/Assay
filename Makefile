@@ -13,18 +13,13 @@ WASM := $(CONTRACTS)/out/assay_safety_registry.wasm
 NETWORK ?= testnet
 SOURCE ?= assay-attester
 CONTRACT_ID ?= CBK4FBIHMDTXCUPE4E3ZDVSFJSCY5FJETTKNIQPN4LFJIKKIBLKIXQ73
+STELLAR_CLI_VERSION := 27.1.0
 
-.PHONY: help all build build-release test test-notify test-preimage test-reproducibility cover lint fmt vet run clean \
-	doctor offline-test e2e-standalone \
+.PHONY: all build build-release test test-notify test-preimage test-reproducibility test-stellar-cli-version cover lint fmt vet run clean \
+	offline-test e2e-standalone \
 	contract-test contract-lint contract-build \
-	build-contract deploy-testnet attest read verify-gate test-gate verify-wasm \
-	eval eval-record eval-compare refresh-fixture
-
-help: ## List every target with a one-line description
-	@awk 'BEGIN {FS = ":.*## "; print "Usage: make <target>\n\nTargets:"} /^[a-zA-Z0-9_.-]+:.*## / {printf "  %-20s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
-
-doctor: ## Check the local toolchain against the versions this repo pins
-	./scripts/doctor.sh
+	build-contract deploy-testnet attest read check-stellar-cli-version verify-gate verify-wasm \
+	eval-record eval-compare
 
 all: build ## Build the scanner (same as build)
 
@@ -68,6 +63,10 @@ test-notify: ## Test the scheduled-failure notifier against a stubbed gh
 # even though the script it tests does.
 test-reproducibility: ## Test the reproducibility script offline against fixtures
 	bash ./scripts/test-reproducibility.sh
+
+# test-stellar-cli-version exercises the Makefile preflight with a stub CLI.
+test-stellar-cli-version:
+	bash ./scripts/test-stellar-cli-version.sh
 
 # test-preimage runs the independent Python encoder (written from
 # docs/contract-interface.md alone) against the Go encoder over every committed
@@ -116,10 +115,20 @@ contract-lint: ## Check contract formatting and run clippy with warnings denied
 contract-build: ## Compile the contracts to wasm without the stellar optimizer
 	cd $(CONTRACTS) && cargo build --release --target wasm32v1-none
 
+# Fail before invoking a CLI version that may produce incompatible output or wasm.
+check-stellar-cli-version:
+	@actual="$$(stellar --version 2>/dev/null || true)"; \
+	if ! printf '%s\n' "$$actual" | grep -Eq '(^|[^0-9])$(subst .,[.],$(STELLAR_CLI_VERSION))([^0-9]|$$)'; then \
+		[ -n "$$actual" ] || actual='not installed'; \
+		echo "error: expected stellar CLI $(STELLAR_CLI_VERSION), found '$$actual'." >&2; \
+		echo "Install stellar CLI $(STELLAR_CLI_VERSION) and retry." >&2; \
+		exit 1; \
+	fi
+
 # build-contract produces the deployable artifact. It goes through the stellar
 # CLI rather than cargo because the CLI also runs the wasm optimizer and checks
 # the exported interface; contract-build above is the plain compile.
-build-contract: ## Build the optimized deployable contract wasm with the stellar CLI
+build-contract: check-stellar-cli-version
 	stellar contract build --manifest-path $(CONTRACTS)/Cargo.toml \
 		--package assay-safety-registry --out-dir $(CONTRACTS)/out
 
@@ -134,8 +143,8 @@ build-contract: ## Build the optimized deployable contract wasm with the stellar
 # UNVERIFIABLE and exits 2. That is the honest answer, not a failure of the
 # source. See docs/deployment.md ("Does the source still build what is
 # deployed?").
-verify-wasm: ## Rebuild the contracts and compare against the recorded wasm hashes
-	./scripts/verify-wasm-source.sh
+verify-wasm:
+	./scripts/verify-wasm-source.sh $(if $(SOURCE_REF),--source-ref "$(SOURCE_REF)",)
 
 deploy-testnet: build-contract ## Deploy the contract to testnet and print the new ID
 	stellar contract deploy --wasm $(WASM) \
@@ -150,7 +159,7 @@ deploy-testnet: build-contract ## Deploy the contract to testnet and print the n
 # Every number submitted comes from `assay attestation`, which derives severity,
 # the mechanic bitset, and evidence_hash from that scan. Nothing here lets a
 # hand-written value reach the contract.
-attest: build ## Scan ASSET live and write its attestation on-chain
+attest: check-stellar-cli-version build
 	@test -n "$(ASSET)" || { echo 'usage: make attest ASSET=CODE-ISSUER'; exit 2; }
 	@set -eu; \
 	params=$$(./$(BINARY) attestation -raw '$(ASSET)'); \
@@ -168,7 +177,7 @@ attest: build ## Scan ASSET live and write its attestation on-chain
 
 # read calls get_safety against the deployed contract. It simulates rather than
 # submits, so reading an attestation costs nothing and needs no signature.
-read: ## Read an asset's on-chain attestation with get_safety
+read: check-stellar-cli-version
 	@test -n "$(ASSET)" || { echo 'usage: make read ASSET=CODE-ISSUER'; exit 2; }
 	@set -eu; \
 	sac=$$(stellar contract id asset --asset "$$(printf '%s' '$(ASSET)' | sed 's/-/:/')" --network $(NETWORK)); \
