@@ -69,6 +69,7 @@ carries an explicit, evaluated position on legitimate clawback use. See
 | [docs/deployment.md](docs/deployment.md) | Deployed addresses, attested assets, transaction hashes |
 | [docs/attester-key.md](docs/attester-key.md) | Attester key custody, loss/compromise response, rotation limits |
 | [docs/verifying.md](docs/verifying.md) | How a third party verifies a downloaded binary, then an attestation, end to end, without reading the source |
+| [docs/severity-rating-comparison.md](docs/severity-rating-comparison.md) | Dated comparison of Assay severity with StellarExpert's rating for the top-50 fixture and scanned sample |
 | [docs/offline-bundle.md](docs/offline-bundle.md) | Archiving the exact source bytes behind an attestation, and verifying them without a network |
 | [docs/transitions.md](docs/transitions.md) | What changed between two observations: capability, severity, accountability and evidence movement |
 | [docs/attestation-run.md](docs/attestation-run.md) | Every asset scanned, what each check returned, and what the run exposed about the scanner |
