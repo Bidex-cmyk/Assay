@@ -25,10 +25,19 @@ const redirectToml = "[[CURRENCIES]]\ncode = \"USDC\"\nissuer = \"" + issuer + "
 // the one the scanner uses.
 func fetcherForServer(srv *httptest.Server) *sep1.Fetcher {
 	f := sep1.NewFetcher()
-	f.HTTP = srv.Client()
+	// The host policy refuses non-public hosts before any request, so the
+	// domain under test is a public name and the transport rewrites it to the
+	// test server, the same way the other fetcher tests do.
+	base := srv.Client()
+	f.HTTP = &http.Client{Transport: rewriteTo{base: base.Transport, host: domainOf(srv.URL)}}
 	f.HTTP.CheckRedirect = sep1.CheckRedirect
 	return f
 }
+
+// redirectHost is the public host the redirect tests fetch. The transport
+// rewrites it to the httptest server, so ClassifyHost sees an allowed host
+// while the bytes still come from the test server.
+const redirectHost = "redirect.example"
 
 // TestRedirectWithinBound follows two same-site hops and expects the document
 // at the end. The final URL is the one recorded, so a reader can see where the
@@ -48,7 +57,7 @@ func TestRedirectWithinBound(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	doc, err := fetcherForServer(srv).Fetch(context.Background(), domainOf(srv.URL))
+	doc, err := fetcherForServer(srv).Fetch(context.Background(), redirectHost)
 	if err != nil {
 		t.Fatalf("two same-site redirects within the bound: %v", err)
 	}
@@ -72,7 +81,7 @@ func TestRedirectExceedingBound(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	_, err := fetcherForServer(srv).Fetch(context.Background(), domainOf(srv.URL))
+	_, err := fetcherForServer(srv).Fetch(context.Background(), redirectHost)
 	if err == nil {
 		t.Fatal("an unbounded redirect chain was followed to completion")
 	}
@@ -90,7 +99,7 @@ func TestRedirectCrossHostRefused(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	_, err := fetcherForServer(srv).Fetch(context.Background(), domainOf(srv.URL))
+	_, err := fetcherForServer(srv).Fetch(context.Background(), redirectHost)
 	if err == nil {
 		t.Fatal("a cross-host redirect was followed and its document accepted as the domain's claim")
 	}
@@ -123,6 +132,15 @@ func TestRedirectPolicy(t *testing.T) {
 		{"apex to www", "circle.com", "www.circle.com", true},
 		{"apex to deep subdomain", "circle.com", "cdn.eu.circle.com", true},
 		{"case and trailing dot", "Circle.COM.", "www.circle.com", true},
+		// The free-text home_domain shapes: however the requested host is
+		// spelled, the redirect check must judge it as the same host the
+		// requested URL and blocklist key name.
+		{"root-trailing-dot requested host", "example.com.", "www.example.com", true},
+		{"upper-case requested host", "EXAMPLE.com", "www.example.com", true},
+		{"default-port requested host", "example.com:443", "www.example.com", true},
+		{"root-trailing-dot target", "example.com", "www.example.com.", true},
+		{"upper-case target", "example.com", "WWW.EXAMPLE.COM", true},
+		{"default-port target", "example.com", "example.com:443", true},
 		{"www to apex refused", "www.circle.com", "circle.com", false},
 		{"unrelated host refused", "evil.example", "circle.com", false},
 		{"label-boundary lookalike refused", "circle.com", "notcircle.com", false},

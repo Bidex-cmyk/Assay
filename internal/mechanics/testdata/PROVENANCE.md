@@ -2,6 +2,9 @@
 
 Captured 2026-08-10 from live public sources.
 Each directory is one labelled subject for the eval in docs/eval.md.
+This file is the human index; each subject's `metadata.json` is the
+machine-readable record the eval loads — per-file source URL, capture date,
+and the expected verdict.
 
 | file | source URL |
 | --- | --- |
@@ -30,6 +33,11 @@ Each directory is one labelled subject for the eval in docs/eval.md.
 | `doge-noflags-scam/stellar.toml.status` | https://darkpool.digital/.well-known/stellar.toml (HTTP 000) |
 | `doge-noflags-scam/blocked.json` | https://api.stellar.expert/explorer/directory/blocked-domains/darkpool.digital |
 | `doge-noflags-scam/directory.json` | https://api.stellar.expert/explorer/directory/GA22IDJNHUMC3XKUCCBFNTQIJOUBWINC5GCXHLJ2V6KZ3OWAXCULNQ7P |
+| `doge-reputation-outage/asset.json` | https://horizon.stellar.org/assets?asset_code=DOGE&asset_issuer=GA22IDJNHUMC3XKUCCBFNTQIJOUBWINC5GCXHLJ2V6KZ3OWAXCULNQ7P |
+| `doge-reputation-outage/account.json` | https://horizon.stellar.org/accounts/GA22IDJNHUMC3XKUCCBFNTQIJOUBWINC5GCXHLJ2V6KZ3OWAXCULNQ7P |
+| `doge-reputation-outage/stellar.toml.status` | https://darkpool.digital/.well-known/stellar.toml (HTTP 000) |
+| `doge-reputation-outage/blocked.json` | https://api.stellar.expert/explorer/directory/blocked-domains/darkpool.digital |
+| `doge-reputation-outage/directory.err` | https://api.stellar.expert/explorer/directory/GA22IDJNHUMC3XKUCCBFNTQIJOUBWINC5GCXHLJ2V6KZ3OWAXCULNQ7P (HTTP 429) |
 | `velo-no-home-domain/asset.json` | https://horizon.stellar.org/assets?asset_code=VELO&asset_issuer=GDM4RQUQQUVSKQA7S6EM7XBZP3FCGH4Q7CL6TABQ7B2BEJ5ERARM2M5M (captured 2026-09-28) |
 | `velo-no-home-domain/account.json` | https://horizon.stellar.org/accounts/GDM4RQUQQUVSKQA7S6EM7XBZP3FCGH4Q7CL6TABQ7B2BEJ5ERARM2M5M (captured 2026-09-28) |
 | `velo-no-home-domain/directory.json` | https://api.stellar.expert/explorer/directory/GDM4RQUQQUVSKQA7S6EM7XBZP3FCGH4Q7CL6TABQ7B2BEJ5ERARM2M5M (captured 2026-09-28) |
@@ -48,7 +56,15 @@ Each directory is one labelled subject for the eval in docs/eval.md.
 | `usdz-clawback-regulated/stellar.toml` | https://zeam.money/.well-known/stellar.toml (captured 2026-09-27; abridged to the USDZ CURRENCIES entry, the DOCUMENTATION block, and the header — the full file lists many other assets and validators irrelevant to this subject) |
 | `usdz-clawback-regulated/blocked.json` | https://api.stellar.expert/explorer/directory/blocked-domains/zeam.money (captured 2026-09-27) |
 | `usdz-clawback-regulated/directory.json` | https://api.stellar.expert/explorer/directory/GAKTLPC4ZV37SSCITQ5IS5AQ4WPF4CF4VZJQPPAROSGXMYOATF5U6XPR (captured 2026-09-27) |
-| `synthetic-reputation-outage/*` | Not captured. Payload files are copies of `doge-noflags-scam` (2026-08-10); `blocked.err` is a constructed error marker (HTTP 429) added 2026-09-27 — see that directory's README. |
+| `synthetic-reputation-outage/*` | Not captured. Payload files are copies of `aqua-clear-verified` (2026-08-10); `blocked.err` is a constructed error marker (HTTP 429) added 2026-09-27 — see that directory's README. |
+| `synthetic-redirect-off-host/*` | Not captured. Payload files based on `aqua-clear-verified` (2026-08-10); `stellar.toml.err` records the cross-host redirect refusal error from redirect.example to other.example (added 2026-10-16, #380) — see that directory's README. |
+
+`doge-reputation-outage` is the same real asset as `doge-noflags-scam`, captured
+for the case where a source failed. Its `directory.err` is a deliberate marker,
+not a captured body: it records that the directory was asked and returned an
+error at capture time, so the fixture can express the outage from issue #23
+(see docs/eval.md, "Fixture convention"). The payload files around it are the
+same live captures as the `doge-noflags-scam` rows above.
 
 ### Independent verification for `usdz-clawback-regulated`
 

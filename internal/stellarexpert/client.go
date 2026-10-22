@@ -54,6 +54,48 @@ const defaultUserAgent = "assay/" + version + " (+https://github.com/use-assay/A
 // can assert the bound rather than assume it.
 const MaxBody = 1 << 20 // 1 MiB
 
+// RetryOptions bounds exponential backoff with jitter for transient failures.
+// Retry-After takes precedence when the server advertises it.
+type RetryOptions struct {
+	Attempts        int
+	InitialDelay    time.Duration
+	MaxDelay        time.Duration
+	MaxTotalLatency time.Duration
+}
+
+// DefaultRetryOptions caps total added latency at ~2s, well inside the
+// outer 30s scan budget, and honours the Retry-After we actually observed on
+// api.stellar.expert.
+func DefaultRetryOptions() *RetryOptions {
+	return &RetryOptions{
+		Attempts:        3,
+		InitialDelay:    250 * time.Millisecond,
+		MaxDelay:        500 * time.Millisecond,
+		MaxTotalLatency: 2 * time.Second,
+	}
+}
+
+// Backoff returns the next delay after an attempt failed, with full jitter:
+// a uniform draw in [0, min(MaxDelay, InitialDelay * 2^attempt)].
+func (o *RetryOptions) Backoff(attempt int, retryAfter time.Duration) time.Duration {
+	target := o.InitialDelay * time.Duration(math.Pow(2, float64(attempt)))
+	if target > o.MaxDelay {
+		target = o.MaxDelay
+	}
+	if retryAfter > 0 && retryAfter < target {
+		target = retryAfter
+	}
+	if target <= 0 {
+		target = o.InitialDelay
+	}
+	n := rand.Int63()
+	if n < 0 {
+		n = -n
+	}
+	target = time.Duration(n % int64(target))
+	return target
+}
+
 // AdvertisedMaxAge is the freshness budget StellarExpert publishes for the
 // endpoints Assay consumes.
 //
@@ -354,7 +396,7 @@ func (c *Client) get(ctx context.Context, target string, out any) (bool, error) 
 	for attempt := 0; attempt < opts.Attempts; attempt++ {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 		if err != nil {
-			return false, err
+			return false, fmt.Errorf("stellarexpert: build request %s: %w", target, err)
 		}
 		req.Header.Set("Accept", "application/json")
 		req.Header.Set("User-Agent", c.UserAgent)
@@ -367,7 +409,7 @@ func (c *Client) get(ctx context.Context, target string, out any) (bool, error) 
 			}
 			t := opts.Backoff(attempt, 0)
 			if !wait(ctx, t) {
-				return false, ctx.Err()
+				return false, fmt.Errorf("stellarexpert: get %s: %w", target, ctx.Err())
 			}
 			continue
 		}
@@ -384,7 +426,7 @@ func (c *Client) get(ctx context.Context, target string, out any) (bool, error) 
 			}
 			t := opts.Backoff(attempt, retryAfter)
 			if !wait(ctx, t) {
-				return false, ctx.Err()
+				return false, fmt.Errorf("stellarexpert: get %s: %w", target, ctx.Err())
 			}
 			continue
 		}
@@ -395,7 +437,7 @@ func (c *Client) get(ctx context.Context, target string, out any) (bool, error) 
 			}
 			t := opts.Backoff(attempt, 0)
 			if !wait(ctx, t) {
-				return false, ctx.Err()
+				return false, fmt.Errorf("stellarexpert: get %s: %w", target, ctx.Err())
 			}
 			continue
 		}
@@ -408,7 +450,7 @@ func (c *Client) get(ctx context.Context, target string, out any) (bool, error) 
 			}
 			t := opts.Backoff(attempt, 0)
 			if !wait(ctx, t) {
-				return false, ctx.Err()
+				return false, fmt.Errorf("stellarexpert: read %s: %w", target, ctx.Err())
 			}
 			continue
 		}
@@ -419,7 +461,7 @@ func (c *Client) get(ctx context.Context, target string, out any) (bool, error) 
 			}
 			t := opts.Backoff(attempt, 0)
 			if !wait(ctx, t) {
-				return false, ctx.Err()
+				return false, fmt.Errorf("stellarexpert: decode %s: %w", target, ctx.Err())
 			}
 			continue
 		}
