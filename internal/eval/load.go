@@ -81,6 +81,8 @@ func LoadSubject(fixturesDir, dir string) (*mechanics.Subject, error) {
 		s.Toml = doc
 	} else if msg, ok := readErrMarker(filepath.Join(base, "stellar.toml.status")); ok {
 		s.TomlErr = "status " + msg
+	} else if msg, ok := readErrMarker(filepath.Join(base, "stellar.toml.err")); ok {
+		s.TomlErr = msg
 	}
 
 	s.DirectoryURL = "https://api.stellar.expert/explorer/directory/" + stat.AssetIssuer
@@ -137,7 +139,7 @@ func readErrMarker(path string) (string, bool) {
 func readJSON(path string, out any) error {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return err
+		return fmt.Errorf("read %s: %w", path, err)
 	}
 	if err := json.Unmarshal(b, out); err != nil {
 		return fmt.Errorf("decode %s: %w", path, err)

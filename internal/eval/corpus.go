@@ -1,6 +1,16 @@
 package eval
 
-import "github.com/use-assay/assay/internal/mechanics"
+import (
+	"encoding/json"
+	"fmt"
+	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/use-assay/assay/internal/mechanics"
+)
 
 // CheckLabel is the expected output of one check on one subject.
 //
@@ -22,7 +32,9 @@ type CheckLabel struct {
 // Label is the expected classification of one corpus subject. It carries the
 // aggregate expectation (Base/Severity/Escalated/Accountability) and the
 // per-check expectations (Checks) that #115 requires, so a wrong check cannot
-// hide behind a right total.
+// hide behind a right total. Labels are parsed from the subject's
+// metadata.json beside its fixtures; Corpus never constructs one from
+// anything else.
 type Label struct {
 	// Dir is the fixture directory under the corpus root.
 	Dir string
@@ -30,9 +42,24 @@ type Label struct {
 	// maintainer learns what they broke rather than only seeing a number move.
 	Why string
 
-	Base           mechanics.Severity
-	Severity       mechanics.Severity
-	Escalated      bool
+	// Unknown marks a subject whose metadata deliberately states no verdict
+	// (state "unknown"): the verdict is genuinely uncertain and recording one
+	// would be a guess. Tests that compare verdicts skip an unknown subject
+	// instead of inventing an expectation for it, while the subject stays in
+	// the corpus so its fixtures are still loaded and its provenance still
+	// enforced (#112).
+	Unknown bool
+
+	Base      mechanics.Severity
+	Severity  mechanics.Severity
+	Escalated bool
+	// Undetermined asserts whether the whole report is a partial answer: at
+	// least one check could not conclude because a source it depends on was
+	// unreachable. It is separate from the per-check Undetermined label so the
+	// aggregate state is pinned too, and so a report that is partial for an
+	// unexpected reason fails the eval rather than passing on a per-check
+	// coincidence.
+	Undetermined   bool
 	Accountability mechanics.Accountability
 
 	// Checks carries per-check expectations keyed by check ID. A subject with
@@ -41,9 +68,62 @@ type Label struct {
 	Checks map[string]CheckLabel
 }
 
-// Corpus is the labelled set. Every subject is a real pubnet asset; fixtures
-// and provenance are under internal/mechanics/testdata, and the rationale for
-// each label is in docs/eval.md.
+// subjectDirs is the labelled set's membership: every entry must carry a
+// metadata.json under the corpus root or Corpus fails. Membership is the only
+// thing about the set that lives in Go code; the verdicts, capture dates,
+// source URLs and rationale live in each subject's metadata.json beside its
+// fixtures, so they are edited next to the files they describe (#112).
+var subjectDirs = []string{
+	"aqua-clear-verified",
+	"shx-clear-flagslocked",
+	"xrp-clear-unlocked",
+	"usdz-clawback-regulated",
+	"usdc-revocable-regulated",
+	"berkshire-clawback-scam",
+	"doge-noflags-scam",
+	"doge-reputation-outage",
+	"velo-no-home-domain",
+	"synthetic-redirect-off-host",
+}
+
+// metadataSchemaVersion is the schema_version Corpus accepts. It is pinned
+// rather than defaulted so a future layout change is a loud load failure in
+// every subject at once, not a silent misparse of the fields it kept.
+const metadataSchemaVersion = 1
+
+// nonFixtureFiles are the files a subject directory may hold without being
+// listed in metadata.json: the metadata itself, and the optional README that
+// documents a synthetic fixture's construction. Everything else in the
+// directory is a fixture file and must be listed with its source URL and
+// capture date, so a file cannot sit beside the corpus unprovenanced.
+var nonFixtureFiles = map[string]bool{
+	"metadata.json": true,
+	"README.md":     true,
+}
+
+// metadata is the on-disk form of one subject's labels, stored as
+// <fixturesDir>/<dir>/metadata.json. Field names and the valid/unknown states
+// are documented in docs/eval.md.
+type metadata struct {
+	SchemaVersion int         `json:"schema_version"`
+	Subject       string      `json:"subject"`
+	Why           string      `json:"why"`
+	Files         []fileEntry `json:"files"`
+	Expected      expected    `json:"expected"`
+}
+
+// fileEntry is one fixture file, the URL it was captured from, and the UTC
+// date of that capture. Note carries an optional qualifier (an abridged
+// payload, a constructed error marker, a derived synthetic file).
+type fileEntry struct {
+	File     string `json:"file"`
+	URL      string `json:"url"`
+	Captured string `json:"captured"`
+	Note     string `json:"note,omitempty"`
+}
+
+// expected is the labelled verdict. State selects between the two states:
+// "valid" carries a full verdict, "unknown" refuses to state one.
 //
 // The per-check labels are derived from the same fixtures the aggregate labels
 // are, so the two cannot describe different runs: TestEval and TestEvalPerCheck
@@ -197,4 +277,5 @@ func Corpus() []Label {
 			},
 		},
 	}
+	return nil
 }

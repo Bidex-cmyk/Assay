@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/use-assay/assay/internal/mechanics"
 	"github.com/use-assay/assay/internal/scan"
+	"github.com/use-assay/assay/internal/sep1"
 )
 
 func TestParseAsset(t *testing.T) {
@@ -33,6 +35,15 @@ func TestParseAsset(t *testing.T) {
 				t.Errorf("ParseAsset(%q) = %+v", in, a)
 			}
 		}
+		// A credit asset whose code merely happens to be XLM is an ordinary
+		// asset: only an identifier with no issuer half reads as native.
+		a, err := scan.ParseAsset("XLM-" + issuer)
+		if err != nil {
+			t.Fatalf("ParseAsset(\"XLM-%s\"): %v", issuer, err)
+		}
+		if a.Code != "XLM" || a.Issuer != issuer {
+			t.Errorf("ParseAsset(\"XLM-%s\") = %+v, want the code parsed as an ordinary asset", issuer, a)
+		}
 	})
 
 	t.Run("rejected", func(t *testing.T) {
@@ -49,6 +60,27 @@ func TestParseAsset(t *testing.T) {
 		} {
 			if _, err := scan.ParseAsset(in); !errors.Is(err, scan.ErrBadAsset) {
 				t.Errorf("ParseAsset(%q) error = %v, want ErrBadAsset", in, err)
+			}
+		}
+	})
+
+	// The native asset is understood, not malformed: it must be refused with
+	// the documented explanation — no issuer, no authorization flags, never
+	// scanned, never attested — and never with a parse error.
+	t.Run("native", func(t *testing.T) {
+		for _, in := range []string{"native", "Native", "XLM", "xlm", "xLm", "  XLM  "} {
+			_, err := scan.ParseAsset(in)
+			if !errors.Is(err, scan.ErrNativeAsset) {
+				t.Errorf("ParseAsset(%q) error = %v, want ErrNativeAsset", in, err)
+				continue
+			}
+			if errors.Is(err, scan.ErrBadAsset) {
+				t.Errorf("ParseAsset(%q) = %v, want an explanation of the ledger fact, not a parse error", in, err)
+			}
+			for _, want := range []string{"no issuer", "no authorization flags"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("ParseAsset(%q) error = %q, want it to say %q", in, err, want)
+				}
 			}
 		}
 	})
@@ -242,8 +274,11 @@ func TestTimeout(t *testing.T) {
 	if sub.TomlErr == "" {
 		t.Error("expected TomlErr to be set for slow source")
 	}
-	if !strings.Contains(sub.TomlErr, "context deadline exceeded") && !strings.Contains(sub.TomlErr, "deadline") {
-		t.Errorf("TomlErr = %q, want context deadline exceeded", sub.TomlErr)
+	// The claim carries the canonical failure form, not the raw transport
+	// error: two scanners timing out on the same fetch must record the same
+	// string, or the evidence_hash would differ for the same failure.
+	if sub.TomlErr != sep1.FailureTimeout {
+		t.Errorf("TomlErr = %q, want the canonical %q", sub.TomlErr, sep1.FailureTimeout)
 	}
 
 	// Blocked and Directory finished normally and were not starved
@@ -450,6 +485,8 @@ func TestCacheHitDoesNotRefreshEvidenceTime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+	// Evidence crosses the JSON boundary at whole-second precision (issue #52),
+	// so the comparison truncates the source's fetch time the same way.
 	want := map[string]time.Time{
 		"stellar.expert/directory":       first.DirectoryFetchedAt.Truncate(time.Second),
 		"stellar.expert/blocked-domains": first.BlockedFetchedAt.Truncate(time.Second),
@@ -464,9 +501,9 @@ func TestCacheHitDoesNotRefreshEvidenceTime(t *testing.T) {
 		if ev.Attempted {
 			t.Errorf("%s evidence marked Attempted on a cache hit", ev.Source)
 		}
-		if !ev.RetrievedAt.Equal(at) {
+		if !ev.RetrievedAt.Time().Equal(at) {
 			t.Errorf("%s evidence RetrievedAt = %s, want the original fetch time %s",
-				ev.Source, ev.RetrievedAt.Format(time.RFC3339Nano), at.Format(time.RFC3339Nano))
+				ev.Source, ev.RetrievedAt.Time().Format(time.RFC3339Nano), at.Format(time.RFC3339Nano))
 		}
 	}
 	for source := range want {
@@ -487,7 +524,11 @@ func (t *singleHostTransport) RoundTrip(req *http.Request) (*http.Response, erro
 	u.Scheme = "http"
 	u.Host = t.host
 	req.URL = &u
-	return http.DefaultTransport.RoundTrip(req)
+	resp, err := http.DefaultTransport.RoundTrip(req)
+	if err != nil {
+		return nil, fmt.Errorf("round trip: %w", err)
+	}
+	return resp, nil
 }
 
 // TestSubjectRecordsSkippedBlocklistWhenNoHomeDomain covers the missing state

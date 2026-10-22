@@ -66,6 +66,34 @@ var ErrNoDomain = errors.New("sep1: issuer has no home_domain")
 // attributed evidence, not smoothed into an ordinary source outage.
 var ErrNonPublicHost = errors.New("sep1: home_domain names a non-public host")
 
+// CanonicalFailure maps transport errors to stable categories that exclude
+// hostnames, addresses, and other machine-dependent details.
+func CanonicalFailure(err error) string {
+	if err == nil {
+		return ""
+	}
+	if errors.Is(err, ErrNonPublicHost) {
+		return FailureHostRefused
+	}
+
+	message := strings.ToLower(err.Error())
+	if errors.Is(err, syscall.ECONNREFUSED) || strings.Contains(message, "connection refused") {
+		return FailureConnectionRefused
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) || strings.Contains(message, "no such host") ||
+		strings.Contains(message, "temporary failure in name resolution") ||
+		strings.Contains(message, "server misbehaving") {
+		return FailureDNS
+	}
+	var netErr net.Error
+	if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &netErr) && netErr.Timeout() ||
+		strings.Contains(message, "deadline exceeded") || strings.Contains(message, "timeout") {
+		return FailureTimeout
+	}
+	return FailureFetch
+}
+
 // HostRefusedError is returned when a fetch is refused by host policy. It is
 // distinguishable from an ordinary fetch failure (errors.Is with
 // ErrNonPublicHost, or a type assertion) so a caller can record a refusal as a
@@ -192,9 +220,31 @@ type Currency struct {
 	Toml string `toml:"toml"`
 }
 
+// Documentation is the toml's [DOCUMENTATION] table: where SEP-0001 puts the
+// organisation's own description of itself. Assay reads only the two fields a
+// report attributes — ORG_NAME and ORG_URL — and reads them exactly as
+// published.
+type Documentation struct {
+	// OrgName is the name the organisation gives itself (ORG_NAME).
+	OrgName string `toml:"ORG_NAME"`
+	// OrgURL is where it points readers for more about itself (ORG_URL). It is
+	// deliberately not validated as a URL: this is a relay of the document's
+	// own words, not a fetch target, and Assay never dereferences it.
+	OrgURL string `toml:"ORG_URL"`
+}
+
 // Doc is the subset of stellar.toml that Assay reads.
 type Doc struct {
 	Currencies []Currency `toml:"CURRENCIES"`
+	// Documentation is the [DOCUMENTATION] table, which is where SEP-0001
+	// defines the organisation fields (ORG_NAME / ORG_URL) — not the document
+	// root. They are parsed so the domain check can relay them as attributed
+	// evidence — the report should say who claims to be behind an asset, and
+	// that claim is the toml's, not Assay's — and for no other purpose. Both
+	// fields are issuer-controlled free text, quoted and escaped downstream
+	// like every other issuer-controlled string, and never interpreted by
+	// Assay; each is empty when the document does not declare it.
+	Documentation Documentation `toml:"DOCUMENTATION"`
 	// URL is the location the document was actually fetched from, after
 	// redirects. It can differ from the requested URL.
 	URL string `toml:"-"`
@@ -226,6 +276,33 @@ func (d *Doc) Claims(code, issuer string) bool {
 		}
 	}
 	return false
+}
+
+// Status returns the status field of the currency entry that declares the
+// given asset inline, or the empty string when the asset is not declared
+// inline or its entry sets no status.
+//
+// It matches on both code and issuer, the same rule Claims applies, for the
+// same reason: a status is a statement about one asset, and matching on code
+// alone would let any domain attach a status to any asset code — the exact
+// impersonation the round trip exists to prevent. SEP-0001 allows more than
+// one entry to name the same code and issuer, so the first matching entry
+// wins, mirroring Claims' first-match semantics.
+//
+// The value is returned exactly as published. Assay relays it as an
+// attributed claim and never interprets it: an issuer may write any string,
+// and "dead" from an issuer is a fact about what that issuer says, not a
+// determination Assay makes.
+func (d *Doc) Status(code, issuer string) string {
+	if d == nil {
+		return ""
+	}
+	for _, c := range d.Currencies {
+		if c.matches(code, issuer) {
+			return c.Status
+		}
+	}
+	return ""
 }
 
 // LinkedCurrencies counts entries that delegate to a separate per-currency
@@ -422,9 +499,44 @@ func normalizeHost(h string) string {
 	return strings.ToLower(strings.TrimSuffix(h, "."))
 }
 
-// URLFor returns the SEP-1 well-known location for a domain.
+// NormalizeDomain reduces a free-text home_domain to the one canonical
+// spelling of its host, so that every consumer of the string agrees on which
+// domain is being named.
+//
+// home_domain is issuer-chosen free text, and the same host can be spelled
+// several ways: DNS is case-insensitive ("EXAMPLE.com"), DNS lookup form ends
+// in a root dot ("example.com."), and an https URL may spell out its default
+// port ("example.com:443"). Assay uses this one string for three things that
+// must agree — the requested stellar.toml URL that is attributed in evidence,
+// the host the redirect policy is pinned to, and the key of the
+// malicious-domain blocklist lookup — and they cannot agree while the same
+// host can arrive in three spellings. The blocklist in particular is keyed by
+// exact string: "EXAMPLE.com" would miss an entry listed under "example.com",
+// a false negative on the one signal that can escalate severity.
+//
+// Canonical form is lowercase, without the trailing root dot and without the
+// default https port. A non-default port is preserved: it names a different
+// service, and dropping it would fetch from the wrong one.
+func NormalizeDomain(domain string) string {
+	d := strings.ToLower(strings.TrimSpace(domain))
+	d = strings.TrimSuffix(d, "/")
+	d = strings.TrimSuffix(d, ".")
+	if strings.Count(d, ":") == 1 {
+		// host:port — exactly one colon, so never an IPv6 literal, whose
+		// colons are many. Only the https default port disappears; any
+		// other port is kept.
+		d = strings.TrimSuffix(d, ":443")
+		// The root dot can also sit after the port ("example.com.:443").
+		d = strings.TrimSuffix(d, ".")
+	}
+	return d
+}
+
+// URLFor returns the SEP-1 well-known location for a domain. The domain is
+// canonicalised first, so every spelling of the same host yields the same
+// requested URL — the URL evidence attributes the fetch to.
 func URLFor(domain string) string {
-	return "https://" + strings.TrimSuffix(domain, "/") + "/.well-known/stellar.toml"
+	return "https://" + NormalizeDomain(domain) + "/.well-known/stellar.toml"
 }
 
 // Fetch retrieves and parses the stellar.toml for domain.
@@ -435,7 +547,10 @@ func URLFor(domain string) string {
 // NewFetcher); when the caller supplies its own client the literal check here
 // still applies, and the caller owns the rest of the policy.
 func (f *Fetcher) Fetch(ctx context.Context, domain string) (*Doc, error) {
-	if domain == "" {
+	// Checked after canonicalisation, not before: a domain that normalises
+	// to nothing (whitespace, a lone root dot) advertises no host to fetch
+	// from, and must report that rather than a URL parse error.
+	if NormalizeDomain(domain) == "" {
 		return nil, ErrNoDomain
 	}
 	return f.fetch(ctx, URLFor(domain))
@@ -459,7 +574,7 @@ func (f *Fetcher) fetch(ctx context.Context, target string) (*Doc, error) {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("sep1: build request %s: %w", target, err)
 	}
 	req.Header.Set("User-Agent", f.UserAgent)
 
@@ -491,7 +606,7 @@ func (f *Fetcher) fetch(ctx context.Context, target string) (*Doc, error) {
 func Parse(b []byte) (*Doc, error) {
 	var d Doc
 	if err := toml.Unmarshal(b, &d); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("sep1: decode toml: %w", err)
 	}
 	return &d, nil
 }

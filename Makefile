@@ -9,10 +9,12 @@ WASM := $(CONTRACTS)/out/assay_safety_registry.wasm
 NETWORK ?= testnet
 SOURCE ?= assay-attester
 CONTRACT_ID ?= CBK4FBIHMDTXCUPE4E3ZDVSFJSCY5FJETTKNIQPN4LFJIKKIBLKIXQ73
+STELLAR_CLI_VERSION := 27.1.0
 
-.PHONY: all build test cover lint fmt vet run clean offline-test \
+.PHONY: all build build-release test test-notify test-preimage test-reproducibility test-stellar-cli-version cover lint fmt vet run clean \
+	offline-test e2e-standalone \
 	contract-test contract-lint contract-build \
-	build-contract deploy-testnet attest read verify-gate verify-wasm \
+	build-contract deploy-testnet attest read check-stellar-cli-version verify-gate verify-wasm \
 	eval-record eval-compare
 
 all: build
@@ -20,8 +22,63 @@ all: build
 build:
 	go build -o $(BINARY) ./cmd/assay
 
+# build-release builds the scanner under the flags that make the binary
+# reproducible from any directory on any machine:
+#
+#   -trimpath      removes absolute file system paths from the binary
+#   -buildvcs=false removes the working tree's VCS state (a dirty checkout
+#                  would otherwise stamp vcs.modified=true)
+#   CGO_ENABLED=0  removes the host C toolchain as an input
+#
+# The Go toolchain is pinned by go.mod, so the two inputs left are the source
+# and the flags. CI proves the property by building this target twice in
+# different directories and comparing hashes; see CONTRIBUTING.md
+# ("Reproducible scanner builds").
+#
+# Note: this does not stamp a version. A build from a checkout reports
+# ScannerIdentity "devel"; tagged releases are built by
+# .github/workflows/release.yml with `go install ...@<tag>`, which stamps the
+# tag. That split is deliberate: reproducibility of the local build and
+# version binding of a release are separate guarantees.
+build-release:
+	CGO_ENABLED=0 go build -trimpath -buildvcs=false -o $(BINARY) ./cmd/assay
+
 test:
-	go test -race $(PKG)
+	go test -race -shuffle=on $(PKG)
+
+# test-notify exercises scripts/notify-scheduled-failure.sh against a stubbed
+# gh, covering open/update/comment/close and the "exactly one issue" rule. CI
+# runs it alongside the merge-gate tests.
+test-notify:
+	bash ./scripts/test-notify-scheduled-failure.sh
+
+# test-reproducibility exercises scripts/reproducibility.sh against a stubbed
+# assay binary and fixture tables, covering the PASS/MISMATCH/ENCODING/
+# INCONCLUSIVE outcomes, their exit-code precedence, and the refusal of a
+# table without a valid Preimage column. It needs no network, so CI runs it
+# even though the script it tests does.
+test-reproducibility:
+	bash ./scripts/test-reproducibility.sh
+
+# test-stellar-cli-version exercises the Makefile preflight with a stub CLI.
+test-stellar-cli-version:
+	bash ./scripts/test-stellar-cli-version.sh
+
+# test-preimage runs the independent Python encoder (written from
+# docs/contract-interface.md alone) against the Go encoder over every committed
+# vector, every internal/mechanics/testdata subject, and the language-neutral
+# conformance cases. CI runs this as its own job; a deliberate encoding change
+# fails here until the specification and both implementations agree.
+test-preimage:
+	go test ./internal/attest/ -run IndependentEncoder -v
+
+# e2e-standalone joins the scanner and the contracts on a local quickstart
+# network (issue #463): fixture-derived Params are submitted with the stellar
+# CLI, then get_safety and the example gate are asserted. CI starts the network
+# with stellar/quickstart; locally, run `stellar container start local` first.
+# The script refuses a non-loopback RPC URL and never contacts a public network.
+e2e-standalone:
+	./scripts/e2e-standalone.sh
 
 # cover prints the same per-package table CI puts in the job summary
 # (scripts/coverage-report.sh), lowest coverage first. It reports; it does not
@@ -54,10 +111,20 @@ contract-lint:
 contract-build:
 	cd $(CONTRACTS) && cargo build --release --target wasm32v1-none
 
+# Fail before invoking a CLI version that may produce incompatible output or wasm.
+check-stellar-cli-version:
+	@actual="$$(stellar --version 2>/dev/null || true)"; \
+	if ! printf '%s\n' "$$actual" | grep -Eq '(^|[^0-9])$(subst .,[.],$(STELLAR_CLI_VERSION))([^0-9]|$$)'; then \
+		[ -n "$$actual" ] || actual='not installed'; \
+		echo "error: expected stellar CLI $(STELLAR_CLI_VERSION), found '$$actual'." >&2; \
+		echo "Install stellar CLI $(STELLAR_CLI_VERSION) and retry." >&2; \
+		exit 1; \
+	fi
+
 # build-contract produces the deployable artifact. It goes through the stellar
 # CLI rather than cargo because the CLI also runs the wasm optimizer and checks
 # the exported interface; contract-build above is the plain compile.
-build-contract:
+build-contract: check-stellar-cli-version
 	stellar contract build --manifest-path $(CONTRACTS)/Cargo.toml \
 		--package assay-safety-registry --out-dir $(CONTRACTS)/out
 
@@ -73,7 +140,7 @@ build-contract:
 # source. See docs/deployment.md ("Does the source still build what is
 # deployed?").
 verify-wasm:
-	./scripts/verify-wasm-source.sh
+	./scripts/verify-wasm-source.sh $(if $(SOURCE_REF),--source-ref "$(SOURCE_REF)",)
 
 deploy-testnet: build-contract
 	stellar contract deploy --wasm $(WASM) \
@@ -88,7 +155,7 @@ deploy-testnet: build-contract
 # Every number submitted comes from `assay attestation`, which derives severity,
 # the mechanic bitset, and evidence_hash from that scan. Nothing here lets a
 # hand-written value reach the contract.
-attest: build
+attest: check-stellar-cli-version build
 	@test -n "$(ASSET)" || { echo 'usage: make attest ASSET=CODE-ISSUER'; exit 2; }
 	@set -eu; \
 	params=$$(./$(BINARY) attestation -raw '$(ASSET)'); \
@@ -106,7 +173,7 @@ attest: build
 
 # read calls get_safety against the deployed contract. It simulates rather than
 # submits, so reading an attestation costs nothing and needs no signature.
-read:
+read: check-stellar-cli-version
 	@test -n "$(ASSET)" || { echo 'usage: make read ASSET=CODE-ISSUER'; exit 2; }
 	@set -eu; \
 	sac=$$(stellar contract id asset --asset "$$(printf '%s' '$(ASSET)' | sed 's/-/:/')" --network $(NETWORK)); \
