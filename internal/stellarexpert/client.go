@@ -54,6 +54,28 @@ const defaultUserAgent = "assay/" + version + " (+https://github.com/use-assay/A
 // can assert the bound rather than assume it.
 const MaxBody = 1 << 20 // 1 MiB
 
+// RetryOptions bounds attempts and spaces retries with backoff.
+type RetryOptions struct {
+	Attempts int
+	Backoff  func(attempt int, retryAfter time.Duration) time.Duration
+}
+
+// DefaultRetryOptions returns the bounded retry policy used for transient
+// StellarExpert failures.
+func DefaultRetryOptions() RetryOptions {
+	return RetryOptions{
+		Attempts: 3,
+		Backoff: func(attempt int, retryAfter time.Duration) time.Duration {
+			backoff := time.Duration(float64(100*time.Millisecond) * math.Pow(2, float64(attempt)))
+			delay := backoff + time.Duration(rand.Float64()*float64(backoff))
+			if retryAfter > delay {
+				return retryAfter
+			}
+			return delay
+		},
+	}
+}
+
 // AdvertisedMaxAge is the freshness budget StellarExpert publishes for the
 // endpoints Assay consumes.
 //

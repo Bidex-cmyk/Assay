@@ -298,6 +298,7 @@ fn write_attestation(
     attested_at: u64,
 ) {
     let key = DataKey::Safety(asset.clone());
+    let previous = env.storage().persistent().get(&key);
     let safety = Safety {
         severity,
         flags,
@@ -310,11 +311,10 @@ fn write_attestation(
     // Publish after the write. Emitting before would let a storage failure
     // produce a visible "attest" for an attestation that does not exist;
     // emitting after means indexers observe writes that actually happened.
-    Attested {
+    AttestationEvent {
         asset,
-        severity,
-        flags,
-        attested_at,
+        previous,
+        current: safety,
     }
     .publish(env);
 }
@@ -441,37 +441,8 @@ impl SafetyRegistry {
 
         validate_attestation(severity, flags)?;
 
-        write_attestation(
-            &env,
-            asset,
-            severity,
-            flags,
-            evidence_hash,
-            attested_at,
-        };
-
-        // Read the previous value before overwriting
-        let previous = env
-            .storage()
-            .persistent()
-            .get::<DataKey, Safety>(&DataKey::Safety(asset.clone()));
-
-        // Write the new attestation
-        env.storage()
-            .persistent()
-            .set(&DataKey::Safety(asset.clone()), &safety);
-
-        // Extend TTL to maximum so the attestation persists until explicitly
-        // overwritten. Freshness is enforced by the caller via max_age_secs on
-        // is_safe, not by storage expiry.
-        env.storage().persistent().extend_ttl(
-            &DataKey::Safety(asset),
-            100,
-            env.storage().max_ttl(),
-        );
-        let key = DataKey::Safety(asset.clone());
-        env.storage().persistent().set(&key, &safety);
-        extend_attestation(&env, &key);
+        let attested_at = env.ledger().timestamp();
+        write_attestation(&env, asset, severity, flags, evidence_hash, attested_at);
         extend_instance(&env);
         Ok(())
     }
@@ -480,7 +451,7 @@ impl SafetyRegistry {
     /// can cover more than a curated few per ledger of fee budget.
     ///
     /// Each element is written exactly as [`Self::attest`] writes it: the same
-    /// key, the same value, the same `Attested` event, and the same validation,
+    /// key, the same value, the same `AttestationEvent`, and the same validation,
     /// which both paths get from the same `validate_attestation`. A read after
     /// a batch is therefore indistinguishable from a read after the equivalent
     /// sequence of single calls — the property

@@ -21,16 +21,9 @@ import (
 //go:embed ui/index.html
 var uiFS embed.FS
 
-// Scanner describes what the API server needs from a scanner.
-type Scanner interface {
-	ScanWithHolder(ctx context.Context, a mechanics.Asset, holder string) (*mechanics.Report, error)
-}
-
 // Server serves scan results and recorded observation history.
 type Server struct {
-// Server serves scan results and recorded observation history.
-type Server struct {
-	Scanner Scanner
+	Scanner *scan.Scanner
 	// History stores one observation per successful scan. It is a pointer so a
 	// caller can replace the default in-memory store with a file-backed one
 	// (history.Open) or with a pre-seeded store in a test.
@@ -49,7 +42,12 @@ type Server struct {
 // NewServer returns a Server backed by the production scanner and an in-memory
 // observation history that does not survive a restart.
 func NewServer(log *slog.Logger) *Server {
-	return &Server{Scanner: scan.New(), History: history.New(), Metrics: NewMetrics(), Log: log}
+	return NewServerWithScanner(scan.New(), log)
+}
+
+// NewServerWithScanner returns a Server backed by the supplied scanner.
+func NewServerWithScanner(scanner *scan.Scanner, log *slog.Logger) *Server {
+	return &Server{Scanner: scanner, History: history.New(), Metrics: NewMetrics(), Log: log}
 }
 
 // Handler returns the configured HTTP routes.
@@ -154,7 +152,7 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-if s.History != nil {
+	if s.History != nil {
 		if err := s.History.Append(temporal.ObservationFromReport(report)); err != nil {
 			s.Log.Error("history append failed", "asset", asset.String(), "err", err)
 		}

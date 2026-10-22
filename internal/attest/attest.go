@@ -27,6 +27,17 @@ import (
 // that a verifier would compare against v1 bytes.
 const PreimageVersion = "assay-evidence-v1"
 
+// ScannerIdentity is the module version that produced the report.
+var ScannerIdentity = scannerIdentity()
+
+func scannerIdentity() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok || info.Main.Version == "" || info.Main.Version == "(devel)" {
+		return "devel"
+	}
+	return info.Main.Version
+}
+
 // PreimageVersionCheckSet is the encoding used once a report binds its check
 // set. It adds a `checks` line naming the checks the engine actually ran, so a
 // report produced by an engine with a check removed cannot hash the same as one
@@ -296,8 +307,6 @@ func Preimage(rep *mechanics.Report) string {
 	line(&b, "escalated", strconv.FormatBool(rep.Escalated))
 	line(&b, "mechanics", strconv.FormatUint(uint64(rep.Mechanics), 10))
 	line(&b, "accountability", string(rep.Accountability))
-	line(&b, "checks", strings.Join(rep.Checks, ","))
-
 	// A bound check set is written as its own line so a verifier can name the
 	// checks a report is missing. Reports with no check set omit it entirely,
 	// keeping their bytes identical to the v1 encoding.
@@ -305,6 +314,8 @@ func Preimage(rep *mechanics.Report) string {
 		checks := append([]string(nil), rep.CheckSet...)
 		sort.Strings(checks)
 		line(&b, "checks", strings.Join(checks, ","))
+	} else {
+		line(&b, "checks", "")
 	}
 
 	// A bound network is written after the check set and before the evidence:
@@ -340,7 +351,7 @@ func Preimage(rep *mechanics.Report) string {
 // byte format completely.
 func preimageVersion(rep *mechanics.Report) string {
 	switch {
-	case rep.Network != "":
+	case rep.Network != "" || rep.ScannerBound:
 		return PreimageVersionNetwork
 	case len(rep.CheckSet) > 0:
 		return PreimageVersionCheckSet

@@ -7,6 +7,23 @@ import (
 	"strings"
 )
 
+// AdverseDirectoryTags are the StellarExpert tags that escalate severity.
+var AdverseDirectoryTags = []string{"malicious", "unsafe"}
+
+var descriptiveDirectoryTags = []string{
+	"issuer", "anchor", "exchange", "wallet", "custodian",
+	"personal", "sdf", "memo-required", "airdrop", "obsolete-inflation-pool",
+}
+
+const directoryTagUnknown = 0
+
+func classifyDirectoryTag(tag string) int {
+	if slices.Contains(AdverseDirectoryTags, tag) || slices.Contains(descriptiveDirectoryTags, tag) {
+		return 1
+	}
+	return directoryTagUnknown
+}
+
 // ReputationCheck folds in StellarExpert's curated reputation data and any
 // configured SEP-0042 asset list.
 //
@@ -51,6 +68,7 @@ func (c ReputationCheck) Run(_ context.Context, s *Subject) (Finding, error) {
 	// separate from "answered, not listed" because collapsing the two is
 	// exactly how a scanner reports an outage as a clean bill of health.
 	var unreachable []string
+	var unasked []string
 	// unrecognised names directory tags outside Assay's documented vocabulary.
 	// They never escalate, but they are recorded so the vocabulary can be
 	// extended deliberately rather than an adverse tag being silently missed.
@@ -124,7 +142,7 @@ func (c ReputationCheck) Run(_ context.Context, s *Subject) (Finding, error) {
 					"unrecognised directory tag %q: not in Assay's documented vocabulary, "+
 						"so it did not affect severity; review it so the vocabulary can be updated deliberately",
 					tag),
-				RetrievedAt: s.DirectoryFetchedAt,
+				RetrievedAt: NewCanonicalTime(s.DirectoryFetchedAt),
 			})
 		}
 	}
@@ -161,7 +179,7 @@ func (c ReputationCheck) Run(_ context.Context, s *Subject) (Finding, error) {
 				Source:      assetListSource(l),
 				URL:         l.URL,
 				Claim:       "not retrievable: " + l.Err,
-				RetrievedAt: l.AttemptedAt,
+				RetrievedAt: NewCanonicalTime(l.AttemptedAt),
 				Attempted:   true,
 			})
 		case l.Listed:
@@ -170,7 +188,7 @@ func (c ReputationCheck) Run(_ context.Context, s *Subject) (Finding, error) {
 				Source:      assetListSource(l),
 				URL:         l.URL,
 				Claim:       assetListClaim(l),
-				RetrievedAt: l.FetchedAt,
+				RetrievedAt: NewCanonicalTime(l.FetchedAt),
 			})
 		default:
 			// The list was read and does not contain the asset. Stated as its
@@ -181,7 +199,7 @@ func (c ReputationCheck) Run(_ context.Context, s *Subject) (Finding, error) {
 				Source:      assetListSource(l),
 				URL:         l.URL,
 				Claim:       fmt.Sprintf("not present in list %q", assetListName(l)),
-				RetrievedAt: l.FetchedAt,
+				RetrievedAt: NewCanonicalTime(l.FetchedAt),
 			})
 		}
 	}
@@ -216,6 +234,9 @@ func (c ReputationCheck) Run(_ context.Context, s *Subject) (Finding, error) {
 			". This is StellarExpert's determination, reported here as their claim " +
 			"and not re-derived by Assay. It raises the level regardless of what the " +
 			"issuer's flags allow." + listNote
+		if s.HomeDomain() != "" && !s.DomainVerified() {
+			f.Reasoning += fmt.Sprintf(" The issuer's home_domain %q is not verified by a reciprocal stellar.toml claim.", s.HomeDomain())
+		}
 		return f, nil
 	}
 
@@ -230,8 +251,15 @@ func (c ReputationCheck) Run(_ context.Context, s *Subject) (Finding, error) {
 	// a missing answer from a missing question.
 	if len(unreachable) > 0 || len(unasked) > 0 {
 		f.Undetermined = true
-		f.Reasoning = "Reputation could not be determined: " + joinPowers(unreachable) +
-			" did not answer, and the failure is recorded above verbatim. This is " +
+		var gaps []string
+		if len(unreachable) > 0 {
+			gaps = append(gaps, joinPowers(unreachable)+" did not answer")
+		}
+		if len(unasked) > 0 {
+			gaps = append(gaps, joinPowers(unasked)+" could not be checked")
+		}
+		f.Reasoning = "Reputation could not be determined: " + joinPowers(gaps) +
+			". The failure is recorded above verbatim where a request was made. This is " +
 			"not a clean result. Absence of a malicious listing is only meaningful " +
 			"when the list was actually read, and an asset whose only adverse signal " +
 			"is a curated listing would look clear here. Treat the severity below as " +

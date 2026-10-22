@@ -37,6 +37,9 @@ const version = "v0.1.0"
 // asked for more than this, rather than assuming it.
 const MaxBody = 1 << 20 // 1 MiB
 
+// MaxRedirects bounds how many redirects a stellar.toml fetch may follow.
+const MaxRedirects = 5
+
 // MaxLinkedDocuments bounds how many per-currency TOML links Assay follows for
 // a single issuer stellar.toml. SEP-0001 allows a CURRENCIES entry to carry
 // `toml="https://DOMAIN/.well-known/CURRENCY.toml"` as its only field, and a
