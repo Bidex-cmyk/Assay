@@ -191,7 +191,7 @@ This design specifies what is observable, not who gets paged.
 
 ## Dry-run mode
 
-**Specified: `assay-attester --dry-run`.** With the flag set, the pipeline
+**Specified, and implemented in [`cmd/assay-attester`](attester.md): `assay-attester --dry-run`.** With the flag set, the pipeline
 performs the full path — scan, derive `Params` via `FromReport`, including the
 confiscation-invariant and undetermined re-checks, derive the SAC address for
 the target network — and then **stops before signing**. It prints, per asset,
@@ -219,6 +219,10 @@ cmd/assay-attester
   --once               one pass, then exit (the unit schedulers invoke)
   --watch              issuer watcher for event-driven re-attestation
 ```
+
+`--config`, `--dry-run`, `--once` and a read-only `--watch` (it detects and
+reports flag changes; it does not re-attest) are implemented; see
+[attester.md](attester.md). Signing is not.
 
 Per asset, one pass is: `scan` → `mechanics` report → `attest.FromReport` →
 (if unchanged evidence-hash **and** still fresh per

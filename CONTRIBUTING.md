@@ -285,6 +285,8 @@ Semantics, matching the script's exit codes:
   says `INCONCLUSIVE`, not `PASS`.
 - A run can produce several outcomes; the exit code is the most severe:
   **1 (evidence drift) > 3 (encoding drift) > 2 (inconclusive) > 0**.
+- **Responding to a failure:** classify it and act per the runbook in
+  [docs/reproducibility-mismatch.md](docs/reproducibility-mismatch.md).
 - **stale — n/a.** The hash commits to what the sources claimed, not to when
   they were asked, so attestation age is irrelevant to this comparison.
   Freshness policy lives in [docs/freshness.md](docs/freshness.md).

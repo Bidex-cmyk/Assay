@@ -85,14 +85,17 @@ Every Go package, its responsibility, and the boundary it must respect.
 | Package | Responsibility | Boundary |
 | --- | --- | --- |
 | `cmd/assay` | The `assay` binary: `scan`, `attestation`, `verify`, `diff`, `history`, `registry-history`, `serve`. Parses arguments, wires the scanner and API, prints JSON. | Process entry point. Fetches nothing itself; delegates to `internal/scan` and `internal/api`. |
+| `cmd/assay-attester` | The keyless half of the attestation writer: `--dry-run --once` (scan, derive `attest()` arguments and the SAC address, never sign), a read-only `--watch` for issuer flag changes, and `diff` for the CI dry-run. See [attester.md](attester.md). | Process entry point. Loads no key material; delegates to `internal/attester`. |
 | `cmd/attestfixture` | Derives `attest()` arguments from one labelled fixture for the local-network end-to-end test. | Offline test helper; reads fixtures through `internal/eval` and never fetches a source. |
 | `cmd/eval` | Records and diffs the labelled eval baseline. | Offline; reads fixtures through `internal/eval`. |
 | `cmd/refreshfixture` | Re-captures corpus fixtures from recorded live source URLs to detect upstream drift. | Offline maintenance only; never run in CI or live scan. |
 | `internal/api` | HTTP API (`/api/v1/scan`, `/api/v1/history`, `/healthz`) and the embedded single-file UI. | Inbound HTTP only. Does not fetch sources; it calls the scanner. Its one `horizon` import is the `ErrNotFound` sentinel, not a fetch. |
+| `internal/attester` | Attested-set config, the dry-run pass and its exit codes, the dry-run diff, and the issuer watcher. | Calls the scanner (or replays fixtures through `internal/eval`) and reads Horizon operations through `internal/horizon`. No key material and no transaction submission. |
 | `internal/assetlist` | Fetches and parses SEP-0042 Stellar Asset Lists to provide curated asset metadata and claims. | Outbound HTTP. Leaf package; called by `internal/scan`. |
 | `internal/cache` | Thread-safe in-memory TTL cache for HTTP responses and reputation queries. | No I/O. In-memory storage only; leaf package used by `internal/stellarexpert`. |
 | `internal/differential` | Compares Assay scanner reports against stellar-core XDR ledger state. | Test and verification utility; reads XDR and ledger state, no production dependencies. |
 | `internal/fixtures` | Utilities to read, diff, refresh, and validate test fixture manifests and provenance. | Filesystem I/O for fixtures; outbound HTTP when re-capturing. Offline and test only. |
+| `internal/sac` | Derives a classic asset's Stellar Asset Contract address for a network, exactly as `stellar contract id asset` does. | **No I/O.** A pure function of asset and network passphrase. |
 | `internal/scan` | The network edge for a scan: fetches every source once, assembles `mechanics.Subject` (and an optional holder trustline), then runs the engine. | **The only package that performs network I/O for a scan.** |
 | `internal/mechanics` | The checks. Maps ledger flags and attributed source signals to `Finding`s, then aggregates them into a `Report` with severity and reasoning. | **No I/O.** A pure function from `Subject` to `Report`. |
 | `internal/attest` | Canonicalises a `Report` into the exact `attest()` arguments, and specifies the `evidence_hash` preimage and encoding. | **No I/O of any kind.** |
