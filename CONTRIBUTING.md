@@ -5,6 +5,10 @@ have found a way to make Assay under-report risk, that is a security issue —
 see [SECURITY.md](SECURITY.md) and report it privately rather than opening an
 issue.
 
+**New here?** [docs/first-15-minutes.md](docs/first-15-minutes.md) walks the
+first loop (test, scan, read a report, run the eval, pick an issue) in about
+fifteen minutes. This page is the full reference.
+
 ## Ground rules
 
 Assay makes claims about whether someone's money can be taken. Two rules
