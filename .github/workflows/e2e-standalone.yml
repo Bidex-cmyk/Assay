@@ -58,14 +58,14 @@ jobs:
         working-directory: assay-contracts
         run: rustup toolchain install
 
-      # Keep the local network on protocol 27, which the pinned Quickstart image
-      # supports. `latest` can advance Core past the CLI/contract toolchain.
+      # Use protocol 28 for the Soroban SDK 28 contracts and keep Quickstart
+      # pinned so its Core/RPC versions cannot drift independently.
       - name: start local Stellar network
         uses: stellar/quickstart@main
         with:
           tag: v676-b1505.1-latest
           network: local
-          protocol_version: "27"
+          protocol_version: "28"
           enable: core,rpc,horizon
           enable_logs: "false"
 
