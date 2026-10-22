@@ -189,6 +189,73 @@ The runbook for these alerts is [#115](https://github.com/use-assay/Assay/issues
 source-specific outage response is in [source-outage.md](source-outage.md).
 This design specifies what is observable, not who gets paged.
 
+## The run record
+
+Mechanism 1 above, specified. Every run writes one JSON document; `make attest`
+already writes one per invocation (`scripts/attest-run.sh`, records under
+`attest-runs/`, which is git-ignored and is the operator's to archive).
+
+```json
+{
+  "schema": "assay-attestation-run-v1",
+  "run_id": "20261022T101500Z",
+  "started_at": "2026-10-22T10:15:00Z",
+  "finished_at": "2026-10-22T10:15:12Z",
+  "mode": "manual",
+  "network": "testnet",
+  "contract_id": "CBK4FBIHMDTXCUPE4E3ZDVSFJSCY5FJETTKNIQPN4LFJIKKIBLKIXQ73",
+  "source_account": "assay-attester",
+  "commit": "c831b6b…",
+  "entries": [
+    {
+      "asset": "USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+      "sac": "CA2E53VHFZ6YSWQIEIPBXJQGT6VW3VKWWZO555XKRQXYJ63GEBJJGHY7",
+      "status": "attested",
+      "severity": 2,
+      "flags": 18,
+      "evidence_hash": "6a9e…a294",
+      "tx_hash": "3f1c…"
+    }
+  ]
+}
+```
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `schema` | string | Always `assay-attestation-run-v1`. A change to this document's shape bumps it. |
+| `run_id` | string | UTC start time, `YYYYMMDDTHHMMSSZ`. Unique per run on one host. |
+| `started_at`, `finished_at` | string | RFC 3339 UTC. |
+| `mode` | string | `manual` (`make attest`) or, once the pipeline exists, `scheduled`. |
+| `network` | string | The registry's network, as passed to `stellar --network`. |
+| `contract_id` | string | The registry written to. Checking it against [deployment.md](deployment.md) catches a run against the wrong contract. |
+| `source_account` | string | The signing identity's name. Never a secret: no seed or key material appears anywhere in a record. |
+| `commit` | string or null | The repository commit the run was made from, when known. |
+| `entries` | array, **at least one** | One per asset, in run order. |
+
+Each entry:
+
+| Field | Present when | Meaning |
+| --- | --- | --- |
+| `asset` | always | `CODE-ISSUER`. |
+| `sac` | when derivable | The SAC address for the registry's network, even for a refused or errored asset, so the record names the address that was not written. |
+| `status` | always | Exactly one of `attested`, `refused`, `errored`. |
+| `severity`, `flags`, `evidence_hash` | the arguments were derived | The values sent (or that would have been sent) to `attest`. |
+| `tx_hash` | `attested` | The submitted transaction. `null` only if the CLI reported success without printing a hash: recorded as such, never guessed. |
+| `reason` | `refused`, `errored` | **Verbatim.** For `refused`, `attest`'s own refusal (undetermined, unevaluated, stale, or the confiscation invariant). For `errored`, the error from the scan, the SAC derivation or the submission. |
+
+The rules, which `scripts/test-attest-run.sh` pins:
+
+- **An empty run is an error.** A run that would produce zero entries exits 2
+  and writes no record, because a record with no entries cannot say what
+  happened to anything.
+- **`refused` is not `errored`.** A refusal is the pipeline working: the report
+  could not honestly be attested. An error means the run could not tell.
+- **The record is written whatever happened.** A run that was refused or failed
+  writes the same record, so the absence of a record is itself the signal that
+  a run did not happen.
+- **Exit codes follow the dry-run's:** 0 if everything was attested, 1 if
+  anything was refused and nothing errored, 2 if anything errored.
+
 ## Dry-run mode
 
 **Specified: `assay-attester --dry-run`.** With the flag set, the pipeline

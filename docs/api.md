@@ -36,6 +36,77 @@ so it stays exactly what [integrating.md](integrating.md) already uses it as —
 a never-attested asset the on-chain gate refuses. `GET /api/v1/history?asset=XLM`
 returns the same `400` and message. A credit asset whose code merely happens
 to be XLM (`XLM-G…`) is an ordinary asset and scans normally.
+### Checking one holder's exposure: `holder=`
+
+`GET /api/v1/scan?asset=CODE-ISSUER&holder=G...`
+
+Without `holder`, a scan answers **"would I be exposed?"**: what the issuer can
+do to a new holder, from the issuer's current flags. With `holder`, it also
+answers **"am I exposed?"** for that one account. Under CAP-0035,
+`is_clawback_enabled` is fixed on a trustline when the trustline is created,
+so a holder who opened theirs before the issuer enabled clawback is not
+exposed to it, even if the issuer's flag is set now. Issuer flags cannot tell
+those two holders apart; the holder's own trustline can.
+
+**Validation.** `holder` must be a Stellar account ID (`G…`, 56 characters).
+Anything else is refused with `400 Bad Request` before any fetch:
+
+```json
+{ "error": "scan: invalid holder account ID: \"not-an-account\"" }
+```
+
+An empty `holder=` is the same as leaving it out.
+
+**What changes in the report.** The scan reads the holder's trustline from
+Horizon (`/accounts/{holder}`) and adds one finding, `check: "trustline"`
+("Holder trustline flags"):
+
+| Holder's trustline | Finding | Report |
+| --- | --- | --- |
+| `is_clawback_enabled: true` | Evidence quoting both trustline flags, and mechanic `trustline_clawback_enabled` | `mechanics` gains `trustline_clawback_enabled` |
+| Not authorized (`is_authorized: false`) | Mechanic `trustline_deauthorized` | `mechanics` gains `trustline_deauthorized` |
+| Authorized, no clawback | Evidence quoting both flags, no mechanic; the reasoning explains CAP-0035 grandfathering | Unchanged |
+| The holder does not hold the asset | `undetermined: true`: there is no trustline to inspect | `undetermined: true`, `undetermined_checks` includes `trustline`, and the `X-Assay-Undetermined: true` header |
+| Horizon could not be reached for the holder | `undetermined: true`, with a `not retrievable:` evidence claim | As above |
+
+**`severity` never changes.** Severity is issuer-level and holder-independent
+by design, so the same asset reports the same severity to every caller and an
+on-chain gate reads a stable number. The holder answer is in the `trustline`
+finding and in the two `trustline_*` mechanics only.
+
+**Not for attestation.** A holder scan adds holder-specific evidence, so its
+`evidence_hash` differs from the plain scan's, and a holder who does not hold
+the asset makes the report undetermined. Attestations are always derived from
+plain scans (`assay attestation` takes no holder).
+
+Example: a holder whose trustline predates the issuer's clawback flag.
+
+```sh
+curl -s 'http://localhost:8080/api/v1/scan?asset=USDZ-GAKTLPC4ZV37SSCITQ5IS5AQ4WPF4CF4VZJQPPAROSGXMYOATF5U6XPR&holder=GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H'
+```
+
+```json
+{
+  "severity": "high",
+  "mechanics": ["auth_revocable", "auth_clawback_enabled"],
+  "undetermined": false,
+  "findings": [
+    {
+      "check": "trustline",
+      "title": "Holder trustline flags",
+      "severity": "clear",
+      "undetermined": false,
+      "mechanics": [],
+      "reasoning": "Holder GBRP… has an authorized trustline with is_clawback_enabled=false. …"
+    }
+  ]
+}
+```
+
+(Abridged: the report's other fields and findings are unchanged by `holder`.)
+To check every trustline an account holds at once, use the
+[exposure endpoint](#exposure-endpoint) below.
+
 ## Exposure Endpoint
 
 `GET /api/v1/exposure?account=G...&limit=10&cursor=0`

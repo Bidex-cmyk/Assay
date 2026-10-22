@@ -19,7 +19,18 @@ paths:
           required: false
           schema:
             type: string
-          description: Optional holder address to check trustline / balance state
+            pattern: '^G[A-Z2-7]{55}$'
+          example: GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H
+          description: >-
+            Optional holder account ID (G..., 56 characters). Answers "am I
+            exposed?" for that account: the scan reads the holder's trustline
+            and adds a "trustline" finding with the trustline's
+            is_clawback_enabled and is_authorized flags, adding the
+            trustline_clawback_enabled / trustline_deauthorized mechanics when
+            set. Severity never changes (it is issuer-level). A holder that does
+            not hold the asset, or whose trustline cannot be read, makes the
+            report undetermined. An invalid value is a 400 before any fetch; an
+            empty value is the same as omitting it. See docs/api.md.
       responses:
         '200':
           description: Successful scan report. May indicate degraded state via header.
@@ -50,7 +61,8 @@ paths:
                       type: object
         '400':
           description: >-
-            Invalid request parameters, or an asset identifier naming the
+            Invalid request parameters (including a holder that is not a G...
+            account ID), or an asset identifier naming the
             network's native asset (native/XLM), which has no issuer and no
             authorization flags and is therefore never scanned or attested.
         '404':

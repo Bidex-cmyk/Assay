@@ -60,6 +60,11 @@ test-notify:
 test-reproducibility:
 	bash ./scripts/test-reproducibility.sh
 
+# test-attest-run exercises scripts/attest-run.sh (the run record `make attest`
+# writes) against stubbed assay and stellar binaries. No network, no key.
+test-attest-run:
+	bash ./scripts/test-attest-run.sh
+
 # test-stellar-cli-version exercises the Makefile preflight with a stub CLI.
 test-stellar-cli-version:
 	bash ./scripts/test-stellar-cli-version.sh
@@ -155,21 +160,11 @@ deploy-testnet: build-contract
 # Every number submitted comes from `assay attestation`, which derives severity,
 # the mechanic bitset, and evidence_hash from that scan. Nothing here lets a
 # hand-written value reach the contract.
+# attest writes one run record per invocation under attest-runs/ (see
+# docs/attestation-writer.md, "The run record"), whatever the outcome.
 attest: check-stellar-cli-version build
-	@test -n "$(ASSET)" || { echo 'usage: make attest ASSET=CODE-ISSUER'; exit 2; }
-	@set -eu; \
-	params=$$(./$(BINARY) attestation -raw '$(ASSET)'); \
-	severity=$$(printf '%s' "$$params" | cut -f1); \
-	flags=$$(printf '%s' "$$params" | cut -f2); \
-	hash=$$(printf '%s' "$$params" | cut -f3); \
-	sac=$$(stellar contract id asset --asset "$$(printf '%s' '$(ASSET)' | sed 's/-/:/')" --network $(NETWORK)); \
-	echo "$(ASSET)"; \
-	echo "  sac          $$sac"; \
-	echo "  severity     $$severity"; \
-	echo "  flags        $$flags"; \
-	echo "  evidence     $$hash"; \
-	stellar contract invoke --id $(CONTRACT_ID) --source-account $(SOURCE) --network $(NETWORK) \
-		-- attest --asset "$$sac" --severity "$$severity" --flags "$$flags" --evidence_hash "$$hash"
+	@ASSAY_BIN=./$(BINARY) NETWORK=$(NETWORK) CONTRACT_ID=$(CONTRACT_ID) SOURCE=$(SOURCE) \
+		bash ./scripts/attest-run.sh --asset '$(ASSET)'
 
 # read calls get_safety against the deployed contract. It simulates rather than
 # submits, so reading an attestation costs nothing and needs no signature.
