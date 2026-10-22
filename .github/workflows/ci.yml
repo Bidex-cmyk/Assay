@@ -42,6 +42,21 @@ jobs:
       - name: test merge gate
         run: make test-gate
 
+      # The scheduled-failure notification path is shell that runs on GitHub
+      # runners, so its logic is exercised here against a stubbed gh rather
+      # than trusted to a weekly run to discover it is broken.
+      - name: test scheduled-failure notification
+        run: make test-notify
+
+      # The reproducibility script itself is only ever run against live
+      # sources, so its version-aware comparison and exit codes are pinned
+      # here against a stubbed assay binary before the weekly run uses them.
+      - name: test reproducibility script
+        run: make test-reproducibility
+
+      - name: test Stellar CLI version guard
+        run: make test-stellar-cli-version
+
       # Tests must pass without network access: every check is a pure function
       # over fixtures captured under internal/*/testdata.
       #
@@ -49,15 +64,17 @@ jobs:
       # The default bash shell runs with pipefail, so tee does not hide a
       # failing test.
       - name: test
-        run: go test -race -covermode=atomic -coverprofile=coverage.out ./... 2>&1 | tee go-test.log
+        run: go test -race -shuffle=on -covermode=atomic -coverprofile=coverage.out ./... 2>&1 | tee go-test.log
 
       # Per-package coverage, in the log and in the job summary. It reports and
       # does not gate: there is no threshold (#130). It also sends nothing to a
       # third-party service. The report is computed here from `go test` output,
       # and the profile is kept as a GitHub artifact. Runs after a test failure
-      # too, since partial numbers are still information.
+      # too, since partial numbers are still information — but not when the
+      # test step never ran (an earlier vet or build failure), where there is
+      # no log to report on and a usage error would only bury the real one.
       - name: coverage report
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && hashFiles('go-test.log') != '' }}
         run: |
           if ! report=$(./scripts/coverage-report.sh go-test.log coverage.out 2>&1); then
             echo "::warning title=Go coverage::Coverage report unavailable because the test run produced no usable coverage data."
@@ -85,28 +102,34 @@ jobs:
   # run. CI's main job tests one pinned version (go.mod); contributors run
   # others. Map iteration order, strconv formatting and string sorting are
   # where a toolchain difference would surface, so the attest package — the
-  # golden byte comparison and its vectors — runs on one older and one newer
-  # Go version than the pin. A version that changes the bytes fails here
-  # instead of shipping as an unexplained hash mismatch.
+  # golden byte comparison and its vectors — runs on the pin and on one newer
+  # release. A toolchain that changes the bytes fails here instead of shipping
+  # as an unexplained hash mismatch. Both legs stay at or above the pin's
+  # floor (go.mod), which dropped the end-of-life 1.22 line; setup-go exports
+  # GOTOOLCHAIN=local, so a leg below the floor could not build the module.
   #
   # Deliberately narrow, so it does not meaningfully slow CI: this package
   # only, no race detector, no coverage, no matrix for the rest of the module.
   # Explicit versions rather than `stable`: setup-go resolves `stable` to a
   # moving target, which is the same trap the main job's go-version-file pin
-  # avoids for golangci-lint.
+  # avoids for golangci-lint. The `1.26.x` leg uses check-latest below: the
+  # hosted runner cache can otherwise keep serving an older patch (1.26.9)
+  # after the floor in go.mod moves to a newer one (1.26.10), which would make
+  # this leg test a toolchain that cannot even build the module.
   attest-reproducibility:
     name: attest on Go ${{ matrix.go-version }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        go-version: ["1.22.x", "1.27.x"]
+        go-version: ["1.26.x", "1.27.x"]
     steps:
       - uses: actions/checkout@v7.0.1
 
       - uses: actions/setup-go@v7.0.0
         with:
           go-version: ${{ matrix.go-version }}
+          check-latest: true
           cache: true
 
       # Pure functions over committed fixtures under internal/attest/testdata:
@@ -122,6 +145,139 @@ jobs:
       # a 14-mutation run would add minutes of noisy, advisory-only cost to
       # every PR. This comment exists so the absence is a recorded decision
       # rather than an oversight.
+
+  # Every fuzz target runs for a short fixed budget on every push and PR
+  # (issue #293). Fuzzing is only useful if it happens without someone
+  # remembering to run it; the seed corpus alone is exercised by the main test
+  # job, but new mutations are what find new panics. Targets are discovered
+  # rather than hard-coded, so adding a Fuzz* test anywhere gets CI coverage
+  # without editing this workflow again. A failure does not stop the remaining
+  # targets: one artifact should contain every crasher a run produced.
+  #
+  # The per-target budget is 20s. The job is capped at 5 minutes, which keeps
+  # even a run with several targets from slowing every PR. Longer exploration
+  # stays manual: go test ./<pkg> -run '^$' -fuzz '^FuzzName$' -fuzztime 10m.
+  fuzz:
+    name: Fuzz (short)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: fuzz every target for 20s
+        run: |
+          set -uo pipefail
+          failed=0
+          found=0
+          while IFS= read -r pkg; do
+            [ -n "$pkg" ] || continue
+            targets="$(go test "$pkg" -list '^Fuzz' 2>/dev/null | grep -E '^Fuzz' || true)"
+            [ -n "$targets" ] || continue
+            while IFS= read -r target; do
+              [ -n "$target" ] || continue
+              found=$((found + 1))
+              echo "::group::fuzz $target ($pkg)"
+              if ! go test "$pkg" -run '^$' -fuzz "^${target}$" -fuzztime 20s; then
+                failed=1
+              fi
+              echo "::endgroup::"
+            done <<< "$targets"
+          done < <(go list ./...)
+
+          if [ "$found" -eq 0 ]; then
+            echo "::warning title=Fuzz::No fuzz targets found in the module; add a Fuzz* test to make this job meaningful."
+          else
+            echo "Ran $found fuzz target(s) for 20s each."
+          fi
+          if [ "$failed" -ne 0 ]; then
+            exit 1
+          fi
+
+      # The Go fuzzer writes new crashers under the package's testdata/fuzz
+      # directory. Upload whatever exists even when the fuzz step failed, and
+      # even when no crasher was found (if-no-files-found: ignore), so a red
+      # run always leaves the reproducer available for download.
+      - name: upload crashers
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-crashers
+          path: |
+            **/testdata/fuzz/**
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # The encoding has been reimplemented by hand from the specification twice,
+  # and both times the mistake was invisible until someone compared hashes.
+  # This job runs a second implementation (scripts/preimage_encoder.py, written
+  # from docs/contract-interface.md alone) over every committed vector, every
+  # internal/mechanics/testdata subject, and the language-neutral conformance
+  # cases. A change that moves the Go bytes without moving the Python bytes --
+  # or the other way around -- fails here instead of shipping as a hash
+  # mismatch. No network access and no third-party services; python3 is part of
+  # the runner image and is checked explicitly so a missing interpreter cannot
+  # turn the job into a silent pass.
+  preimage-cross-check:
+    name: Independent preimage encoder
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: require python3
+        run: python3 --version
+
+      - name: compare independent encoder with Go
+        run: make test-preimage
+
+  # The scanner is the instrument every attestation comes from. CI already
+  # pins the toolchain it is built with, but nothing checked that two builds of
+  # the same commit produce the same bytes -- which is what lets anyone rebuild
+  # a released assay and compare the hash. This job builds `make build-release`
+  # twice from the same commit in two different directories and fails if the
+  # bytes differ. `-trimpath` removes absolute paths, `-buildvcs=false` removes
+  # the working tree's VCS state, `CGO_ENABLED=0` removes the host C toolchain,
+  # and the toolchain comes from go.mod via setup-go, so the only remaining
+  # input is the source. See CONTRIBUTING.md ("Reproducible scanner builds").
+  reproducible-build:
+    name: Reproducible build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: build twice in different directories
+        run: |
+          set -eu
+          for dir in build-a build-b; do
+            rm -rf "$dir"
+            mkdir -p "$dir"
+            # git archive rather than cp: the build must not depend on .git
+            # (buildvcs=false), and this proves the source alone is enough.
+            git archive HEAD | tar -x -C "$dir"
+            make -C "$dir" build-release
+          done
+
+          sha256sum build-a/assay build-b/assay
+
+          if ! cmp -s build-a/assay build-b/assay; then
+            echo "::error title=Reproducible build::Two builds of the same commit differ; make build-release is not reproducible."
+            exit 1
+          fi
+          echo "::notice title=Reproducible build::Both builds of $(git rev-parse HEAD) hash identically."
 
   lint:
     name: golangci-lint

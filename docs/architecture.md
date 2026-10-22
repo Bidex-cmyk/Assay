@@ -84,18 +84,26 @@ Every Go package, its responsibility, and the boundary it must respect.
 
 | Package | Responsibility | Boundary |
 | --- | --- | --- |
-| `cmd/assay` | The `assay` binary: `scan`, `attestation`, `history`, `serve`. Parses arguments, wires the scanner and API, prints JSON. | Process entry point. Fetches nothing itself; delegates to `internal/scan` and `internal/api`. |
+| `cmd/assay` | The `assay` binary: `scan`, `attestation`, `verify`, `diff`, `history`, `registry-history`, `serve`. Parses arguments, wires the scanner and API, prints JSON. | Process entry point. Fetches nothing itself; delegates to `internal/scan` and `internal/api`. |
+| `cmd/attestfixture` | Derives `attest()` arguments from one labelled fixture for the local-network end-to-end test. | Offline test helper; reads fixtures through `internal/eval` and never fetches a source. |
 | `cmd/eval` | Records and diffs the labelled eval baseline. | Offline; reads fixtures through `internal/eval`. |
+| `cmd/refreshfixture` | Re-captures corpus fixtures from recorded live source URLs to detect upstream drift. | Offline maintenance only; never run in CI or live scan. |
 | `internal/api` | HTTP API (`/api/v1/scan`, `/api/v1/history`, `/healthz`) and the embedded single-file UI. | Inbound HTTP only. Does not fetch sources; it calls the scanner. Its one `horizon` import is the `ErrNotFound` sentinel, not a fetch. |
+| `internal/assetlist` | Fetches and parses SEP-0042 Stellar Asset Lists to provide curated asset metadata and claims. | Outbound HTTP. Leaf package; called by `internal/scan`. |
+| `internal/cache` | Thread-safe in-memory TTL cache for HTTP responses and reputation queries. | No I/O. In-memory storage only; leaf package used by `internal/stellarexpert`. |
+| `internal/differential` | Compares Assay scanner reports against stellar-core XDR ledger state. | Test and verification utility; reads XDR and ledger state, no production dependencies. |
+| `internal/fixtures` | Utilities to read, diff, refresh, and validate test fixture manifests and provenance. | Filesystem I/O for fixtures; outbound HTTP when re-capturing. Offline and test only. |
 | `internal/scan` | The network edge for a scan: fetches every source once, assembles `mechanics.Subject` (and an optional holder trustline), then runs the engine. | **The only package that performs network I/O for a scan.** |
 | `internal/mechanics` | The checks. Maps ledger flags and attributed source signals to `Finding`s, then aggregates them into a `Report` with severity and reasoning. | **No I/O.** A pure function from `Subject` to `Report`. |
 | `internal/attest` | Canonicalises a `Report` into the exact `attest()` arguments, and specifies the `evidence_hash` preimage and encoding. | **No I/O of any kind.** |
+| `internal/bundle` | Writes and verifies the offline attestation archive: manifest, report, preimage and raw response bodies, each bound by digest. | Filesystem I/O only; reads a recording and never reaches the network. |
 | `internal/temporal` | Compares two observations of one asset to a transition: what changed between them. | No I/O and no storage; a pure function of its pair. |
 | `internal/history` | Append-only, bounded per-asset observation log. | Filesystem I/O only; no network. |
 | `internal/horizon` | Retrieves asset and issuer-account state from Horizon. | Outbound HTTP. Leaf package. |
 | `internal/sep1` | Fetches and parses the issuer's `stellar.toml` for reciprocal domain verification. | Outbound HTTP. Leaf package. |
 | `internal/stellarexpert` | Retrieves StellarExpert's curated directory and blocked-domain data as attributed evidence. | Outbound HTTP. Leaf package. |
 | `internal/eval` | Replays the labelled corpus from captured fixtures through the engine; records and diffs the results. | Reads fixtures from disk; never the network. |
+| `internal/replay` | Records every upstream response a live scan fetches (manifest + bodies) and replays a scan from that recording. | Filesystem I/O for recordings only. The replayer replaces the HTTP transport outright, so a replay never reaches the network. |
 | `internal/version` | The scanner version identity recorded with every eval run. | No I/O. Leaf package. |
 
 The two Soroban contracts:
@@ -122,9 +130,14 @@ Two directions are worth stating explicitly because they are load-bearing:
 flowchart TD
     CMDASSAY["cmd/assay"] --> API["internal/api"]
     CMDASSAY --> ATTEST["internal/attest"]
+    CMDASSAY --> BUNDLE["internal/bundle"]
     CMDASSAY --> HIST["internal/history"]
     CMDASSAY --> MECH["internal/mechanics"]
     CMDASSAY --> SCAN["internal/scan"]
+
+    CMDATTESTFIXTURE["cmd/attestfixture"] --> ATTEST
+    CMDATTESTFIXTURE --> EVAL["internal/eval"]
+    CMDATTESTFIXTURE --> MECH
 
     CMDEVAL["cmd/eval"] --> EVAL["internal/eval"]
     CMDEVAL --> MECH
@@ -136,6 +149,9 @@ flowchart TD
     API --> TEMP["internal/temporal"]
 
     ATTEST --> MECH
+    BUNDLE --> ATTEST
+    BUNDLE --> MECH
+    BUNDLE --> REPLAY["internal/replay"]
 
     EVAL --> HZ
     EVAL --> MECH

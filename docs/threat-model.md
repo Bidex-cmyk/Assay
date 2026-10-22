@@ -61,7 +61,7 @@ why the read is fail-closed.
 | Actor | What they control | What they can do to Assay |
 | --- | --- | --- |
 | **Asset issuer** | The authorization flags on their own account, their `home_domain`, the `stellar.toml` at that domain | Change the facts an attestation describes after it is written; publish a `home_domain` pointing anywhere; put hostile strings in `stellar.toml` and directory fields |
-| **Attester key holder** | The admin key, and therefore every write | Attest anything for any asset, overwrite, revoke, or stop writing. A compromise is indistinguishable from honest use on-chain |
+| **Attester key holder** | The admin key, and therefore every write | Attest anything for any asset, overwrite, revoke, stop writing, or transfer the admin role via `transfer_admin`. A compromise is indistinguishable from honest use on-chain |
 | **StellarExpert** (and the SEP-0037 directory) | The curated directory entries and the blocked-domain list | Escalate an asset to `critical`; withdraw a listing that previously escalated one; go dark |
 | **Domain operator** | Whatever the issuer's `home_domain` resolves to — **including one an attacker controls** | Serve a hostile or oversized `stellar.toml`; stall a fetch; lie about which asset it issues |
 | **Consuming contract** (the gate) | Its own call: which SAC address, which threshold or mask, which `max_age_secs` | Read the wrong asset, pass the wrong policy, or mishandle `None` |
@@ -173,8 +173,14 @@ severity — reputation moved an asset *down*, which
   reports capability and evidence changes between consecutive scans. A consumer
   that needs to know an asset *was* escalated can see that it was.
 
-Residual risk accepted: a consumer reading only the current attestation sees the
-lower level with no indication that it was ever higher.
+Residual risk accepted, pending implementation: a consumer reading only the
+current attestation sees the lower level with no indication that it was ever
+higher. [docs/ever-escalated-marker.md](ever-escalated-marker.md) records the
+design decision — a stored, monotone maximum historical severity exposed through
+a read-only entrypoint — which closes the gap by letting a gate refuse assets
+that were once critical. Implementation is held for sign-off on that design;
+this entry moves from "accepted" to "defended" only when the code and its test
+land.
 
 #### 5. Downgrade by removing a check from the engine
 
@@ -190,9 +196,20 @@ returning a generic mismatch. A report with no bound set is read as *unknown*,
 never as complete. See
 [contract-interface.md](contract-interface.md#the-preimage-binds-the-check-set).
 
+The scanner version is bound too. Every report `scan.Scanner` produces is
+written under `assay-evidence-v4`, whose `scanner` line names the module version
+that produced it ([#40](https://github.com/use-assay/Assay/issues/40),
+[#271](https://github.com/use-assay/Assay/issues/271)), so the same evidence
+classified by a different release hashes differently and a verifier can refuse
+versions below a minimum (`attest.VerifyVersion`). Until #271 nothing set the
+binding outside tests, so no real scan carried it. The ten attestations on chain
+are v1 and carry no scanner line. The binding protects attestations written from
+now on.
+
 Not eliminated: whoever controls which code runs controls which checks are in
-the engine. Version and check-set binding narrow the window; they do not close
-it. Only threshold attestation does.
+the engine, and an unreleased `devel` build names no version a verifier can
+check. Version and check-set binding narrow the window; they do not close it.
+Only threshold attestation does.
 
 #### 6. Injection through issuer-controlled strings
 
@@ -296,6 +313,33 @@ its original `attested_at`. So archival is not an expiry control and must not be
 used as one; `revoke` is how an attestation is taken back. The behaviour is
 pinned by `read_after_archival_returns_original_attestation` and recorded in
 [deployment.md](deployment.md#entry-lifetime).
+
+#### 14. Permanent takeover via the pending-admin window (`transfer_admin`)
+
+**Verdict: accepted risk; mitigated by rotation procedures and visibility.**
+
+On any instance built from source with two-step admin transfer, an attacker who
+compromises the current admin key can invoke `transfer_admin(attacker_address)`
+and immediately call `accept_admin()` as the attacker to seize the admin role
+permanently before the operator discovers the compromise.
+
+Unlike attack class 1 (where a key compromise causes false attestations), admin
+takeover causes a permanent loss of contract control:
+- The legitimate operator's key is stripped of write authority (`attest`, `revoke`,
+  and `transfer_admin` all fail with unauthorized caller errors).
+- The attacker becomes the sole authorized attester and cannot be removed through
+  contract calls.
+- Once admin-transfer events exist, indexers and monitoring can detect
+  `transfer_admin` invocations. In the interim, consumers and drift tooling can
+  read `admin()` and `pending_admin()` ([#321](https://github.com/use-assay/Assay/issues/321))
+  to detect unauthorized changes.
+
+**Response procedure:** As documented in [attester-key.md](attester-key.md#response-to-compromise),
+the operator must never attempt to "reclaim" a compromised registry in place. The
+recovery procedure is identical to key loss: deploy a clean registry, initialize it
+to a fresh key, re-attest legitimate assets, redeploy the gate, and mark the
+compromised contract superseded in [deployment.md](deployment.md). A planned
+handshake rotation is for healthy keys, not for active compromise.
 
 ### Out of scope
 

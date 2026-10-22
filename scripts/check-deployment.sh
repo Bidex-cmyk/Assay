@@ -3,7 +3,10 @@
 #
 # That document is the record of what is deployed: the registry and gate
 # addresses, the three gate instances with their wasm hashes, and the ten
-# attestations with their severity, flags and evidence hash. It has drifted
+# attestations with their severity, flags, evidence hash and preimage encoding.
+# The preimage column is checked for presence and vocabulary (v1/v2/v3/v4) and for
+# agreement between the two tables, but not against the chain — the chain
+# stores only the hash. It has drifted
 # before — the docs named a superseded gate after the redeploy, and an
 # unexplained duplicate instance existed before anything recorded it — and
 # drift is silent, because a stale document reads exactly like a correct one.
@@ -158,11 +161,39 @@ def leading_int(cell):
     return int(match.group()) if match else None
 
 
+def preimage_column(header):
+    """The zero-based index of the `Preimage` column, or None."""
+    return header.index("Preimage") if "Preimage" in header else None
+
+
+def set_preimage(entry, code, value):
+    """Records ONE asset's preimage encoding, refusing a disagreement between
+    the two tables that document it."""
+    if value in (None, ""):
+        return
+    recorded = entry.get("preimage")
+    if recorded is not None and recorded != value:
+        die(f"asset {code} names preimage {recorded} in one table and {value} in another")
+    entry["preimage"] = value
+
+
 def strkey_contract(digest_hex):
     """A 32-byte contract hash rendered as a C… strkey: version byte 16,
     the hash, then a CRC16-XMODEM over both, little-endian. The leading C of a
     contract address is base32 of that version byte."""
     payload = bytes([16]) + bytes.fromhex(digest_hex)
+    crc, poly = 0, 0x1021
+    for byte in payload:
+        crc ^= byte << 8
+        for _ in range(8):
+            crc = ((crc << 1) ^ poly) & 0xFFFF if crc & 0x8000 else (crc << 1) & 0xFFFF
+    return base64.b32encode(payload + crc.to_bytes(2, "little")).decode().rstrip("=")
+
+
+def strkey_account(pubkey_bytes):
+    """A 32-byte ed25519 public key rendered as a G… strkey: version byte 48 (6<<3),
+    the key, then a CRC16-XMODEM over both, little-endian."""
+    payload = bytes([48]) + pubkey_bytes
     crc, poly = 0, 0x1021
     for byte in payload:
         crc ^= byte << 8
@@ -230,14 +261,21 @@ with open(DEPLOYMENT, encoding="utf-8") as handle:
                 if len(row) >= 4 and CONTRACT_RE.match(row[0]):
                     instances.append({"addr": row[0], "wasm": row[2], "bound": row[3]})
         elif "Asset" in header[0] and "Issuer" in head and "SAC" in head:
+            preimage_col = preimage_column(header)
             for row in rows:
                 if len(row) >= 4 and CODE_RE.match(row[0]):
-                    assets.setdefault(row[0], {}).update(sac=row[2], evidence=row[3])
+                    entry = assets.setdefault(row[0], {})
+                    entry.update(sac=row[2], evidence=row[3])
+                    if preimage_col is not None and preimage_col < len(row):
+                        set_preimage(entry, row[0], row[preimage_col])
         elif "Asset" in header[0] and "Severity" in head and "Flags" in head:
+            preimage_col = preimage_column(header)
             for row in rows:
                 if len(row) >= 3 and CODE_RE.match(row[0]):
-                    assets.setdefault(row[0], {}).update(severity=leading_int(row[1]),
-                                                          flags=leading_int(row[2]))
+                    entry = assets.setdefault(row[0], {})
+                    entry.update(severity=leading_int(row[1]), flags=leading_int(row[2]))
+                    if preimage_col is not None and preimage_col < len(row):
+                        set_preimage(entry, row[0], row[preimage_col])
         elif len(header) == 2 and "Asset" not in head:
             # The two live-address tables: a bolded row names the contract and
             # the next "Wasm hash" row belongs to it.
@@ -251,6 +289,8 @@ with open(DEPLOYMENT, encoding="utf-8") as handle:
                     pending, registry_tables["gate"] = "gate", {"addr": row[1]}
                 elif row[0].startswith("Wasm hash") and pending:
                     registry_tables[pending]["wasm"] = row[1]
+                elif "Admin" in row[0] and pending == "registry":
+                    registry_tables[pending]["admin"] = row[1]
 
 # The canonical gate is named in both the live-address table and the instance
 # table. One check per contract; a full hash is preferred over an abbreviation
@@ -258,7 +298,12 @@ with open(DEPLOYMENT, encoding="utf-8") as handle:
 contracts = {}
 for label, entry in registry_tables.items():
     if entry.get("addr") and CONTRACT_RE.match(entry["addr"]):
-        contracts[entry["addr"]] = {"wasm": entry.get("wasm"), "bound": None, "label": label}
+        contracts[entry["addr"]] = {
+            "wasm": entry.get("wasm"),
+            "bound": None,
+            "admin": entry.get("admin"),
+            "label": label,
+        }
 for inst in instances:
     entry = contracts.setdefault(inst["addr"],
                                  {"wasm": None, "bound": None, "label": f"instance {inst['addr'][:8]}…"})
@@ -267,11 +312,16 @@ for inst in instances:
     if inst["bound"]:
         entry["bound"] = inst["bound"]
 
+PREIMAGE_VERSIONS = ("v1", "v2", "v3", "v4")
+
 registry_addr = next((addr for addr, e in contracts.items() if e["label"] == "registry"), None)
 for code, entry in assets.items():
-    for field in ("severity", "flags", "sac", "evidence"):
+    for field in ("severity", "flags", "sac", "evidence", "preimage"):
         if entry.get(field) in (None, ""):
             die(f"asset {code} has no documented {field}; the tables in {DEPLOYMENT} may have changed")
+    if entry["preimage"] not in PREIMAGE_VERSIONS:
+        die(f"asset {code} names an unknown preimage encoding "
+            f"{entry['preimage']!r}; expected one of {', '.join(PREIMAGE_VERSIONS)}")
 if not contracts or not assets or registry_addr is None:
     die(f"parsed {len(contracts)} contracts and {len(assets)} assets from {DEPLOYMENT}; "
         "the table format may have changed")
@@ -427,11 +477,13 @@ for addr, entry in sorted(contracts.items()):
     checks.append((f"address {label}", "address", addr, instance_key))
     if entry["wasm"]:
         checks.append((f"wasm {label}", "wasm", wasm_fragment(entry["wasm"]), instance_key))
-    if entry["bound"]:
+    if entry.get("bound"):
         checks.append((f"registry-binding {label}", "bound", entry["bound"], instance_key))
+    if entry.get("admin"):
+        checks.append((f"admin {label}", "admin", entry["admin"], instance_key))
 for code, entry in sorted(assets.items()):
     checks.append((f"attestation {code}", "attestation",
-                   (entry["severity"], entry["flags"], entry["evidence"]),
+                   (entry["severity"], entry["flags"], entry["evidence"], entry["preimage"]),
                    ledger_data_key(registry_addr, scval_safety_key(entry["sac"]))))
 
 keys = {}
@@ -530,7 +582,7 @@ for key, group in keys.items():
             if kind == "attestation":
                 report("absent", name,
                        f"documented severity {expected[0]}, flags {expected[1]}, evidence "
-                       f"{expected[2]}; no attestation entry on chain")
+                       f"{expected[2]}, preimage {expected[3]}; no attestation entry on chain")
             else:
                 report("invalid", name,
                        f"documented {expected}; on-chain: no contract at this address")
@@ -572,17 +624,44 @@ for key, group in keys.items():
             else:
                 report("invalid", name, f"documented {expected}; on-chain {bound}")
 
+        elif kind == "admin":
+            # The contract admin lives in instance storage, keyed by DataKey::Admin.
+            # In XDR, DataKey::Admin is encoded as vec[ symbol("Admin") ] or symbol("Admin").
+            # The value is an ScAddress (account or contract).
+            admin = None
+            for key_scval, val_scval in value.get("storage") or []:
+                symbol = key_scval.get("symbol")
+                if symbol is None:
+                    wrapped = key_scval.get("vec") or []
+                    if len(wrapped) == 1:
+                        symbol = wrapped[0].get("symbol")
+                if symbol == "Admin":
+                    addr_info = val_scval.get("address")
+                    if addr_info:
+                        tag = addr_info[0]
+                        if tag == "account":
+                            admin = strkey_account(addr_info[1])
+                        elif tag == "contract":
+                            admin = strkey_contract(addr_info[1].hex())
+            if admin is None:
+                report("invalid", name,
+                       f"documented admin {expected}; on-chain: the contract's instance storage names no admin")
+            elif fragment_matches(admin, expected):
+                report("valid", name, f"{expected}")
+            else:
+                report("invalid", name, f"documented {expected}; on-chain {admin}")
+
         else:  # attestation
             stored = {key_scval.get("symbol"): val_scval
                       for key_scval, val_scval in (value.get("map") or [])}
             chain_severity = stored.get("severity", {}).get("u32")
             chain_flags = stored.get("flags", {}).get("u32")
             chain_evidence = stored.get("evidence_hash", {}).get("bytes")
-            doc_severity, doc_flags, doc_evidence = expected
+            doc_severity, doc_flags, doc_evidence, doc_preimage = expected
             if chain_severity is None and not chain_evidence:
                 report("absent", name,
                        f"documented severity {doc_severity}, flags {doc_flags}, evidence "
-                       f"{doc_evidence}; the entry on chain holds no attestation")
+                       f"{doc_evidence}, preimage {doc_preimage}; the entry on chain holds no attestation")
                 continue
             problems = []
             if chain_severity != doc_severity:
@@ -595,7 +674,8 @@ for key, group in keys.items():
                 report("invalid", name, "; ".join(problems))
             else:
                 report("valid", name,
-                       f"severity {doc_severity}, flags {doc_flags}, evidence {doc_evidence}")
+                       f"severity {doc_severity}, flags {doc_flags}, evidence {doc_evidence}, "
+                       f"preimage {doc_preimage}")
 
 finish()
 PY

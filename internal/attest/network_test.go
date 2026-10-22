@@ -96,7 +96,7 @@ func TestNetworkBoundReportIsV3WithThePassphrase(t *testing.T) {
 	networkIdx := strings.Index(params.Preimage, line)
 	evidenceIdx := strings.Index(params.Preimage, "evidence\t")
 	if checksIdx < 0 || networkIdx < 0 || evidenceIdx < 0 ||
-		!(checksIdx < networkIdx && networkIdx < evidenceIdx) {
+		checksIdx >= networkIdx || networkIdx >= evidenceIdx {
 		t.Fatalf("network line is not between the checks line and the evidence:\n%s",
 			params.Preimage)
 	}
@@ -139,12 +139,14 @@ func TestUnboundReportKeepsItsEarlierEncoding(t *testing.T) {
 // "which ledger".
 func TestNetworkChangeMovesTheHash(t *testing.T) {
 	base, err := attest.FromReport(report(func(r *mechanics.Report) {
+		r.CheckSet = []string{"capability"}
 		r.Network = horizon.PublicNet
 	}))
 	if err != nil {
 		t.Fatalf("FromReport: %v", err)
 	}
 	moved, err := attest.FromReport(report(func(r *mechanics.Report) {
+		r.CheckSet = []string{"capability"}
 		r.Network = horizon.TestNet
 	}))
 	if err != nil {

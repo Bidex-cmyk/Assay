@@ -1,5 +1,9 @@
 # Package-level testing guide
 
+Go tests require Go 1.26.10 or later. The `go` directive in `go.mod` is
+the source of truth for the minimum version. CI also runs the attestation
+golden-file tests on Go 1.26.x and 1.27.x.
+
 Assay's tests come in three styles. They are not interchangeable: each is the
 cheapest way to prove one kind of property, and reaching for the wrong one
 produces a test that looks like it verifies something and does not. This guide
@@ -97,11 +101,13 @@ mechanic, and you need to pin its *judgment* on real assets.
 
 The eval is `TestEval` (aggregate) and `TestEvalPerCheck` (per check) in
 [`internal/mechanics/eval_test.go`](../internal/mechanics/eval_test.go). Both
-iterate `eval.Corpus()` and rebuild each subject with `eval.LoadSubject`, which
+iterate the corpus `eval.Corpus` loads from each subject's `metadata.json` and
+rebuild each subject with `eval.LoadSubject`, which
 decodes files under `internal/mechanics/testdata/<case-name>/` using the same
 decoders as the live fetchers. A fixture that parses in the test is therefore
 one the real client would have accepted. The labels and their rationale live in
-one place — [`internal/eval`](../internal/eval) and
+one place — the metadata files beside the fixtures, loaded by
+[`internal/eval`](../internal/eval) and documented in
 [docs/eval.md](eval.md) — so the aggregate and per-check expectations cannot
 describe different runs.
 
@@ -113,6 +119,16 @@ See [docs/adding-a-check.md](adding-a-check.md) and [docs/eval.md](eval.md).
 `internal/attest`'s golden tests are the same idea applied to bytes: `Preimage`
 is run over fixtures and compared byte-for-byte against the committed
 `.preimage` and `.digest` files under `internal/attest/testdata/vectors/`.
+
+Those vectors still compare Go with bytes the Go encoder is expected to
+produce. To catch a mistake that is internally consistent — the empty-checks
+line regression was one — a second encoder lives in
+[`scripts/preimage_encoder.py`](../scripts/preimage_encoder.py). It was written
+from [`docs/contract-interface.md`](contract-interface.md) alone, not from the
+Go implementation, and CI runs it over every committed vector, every
+`internal/mechanics/testdata` subject, and the language-neutral conformance
+cases. Both encoders must produce identical preimage bytes and SHA-256 digests;
+run the same check locally with `make test-preimage`.
 
 ## Why the fixture loader cannot express a fetch error
 
@@ -171,7 +187,40 @@ grep -rn 'testdata\|httptest' internal/ --include='*_test.go'
 Then run the same checks CI runs:
 
 ```sh
-make test    # go test -race ./...
+make test    # go test -race -shuffle=on ./...
 make lint    # golangci-lint
 make fmt     # gofmt -w .
 ```
+
+Use the Go version named in `go.mod` (**1.26.10**): every CI job pins to it via
+`go-version-file`, and the floor was raised there to clear the reachable
+`net/http` and `crypto/x509` advisories that fail `govulncheck` on older
+standard libraries. A
+toolchain above the floor is fine — `attest-reproducibility` runs the golden
+preimage tests on `1.26.x` and `1.27.x` — but a toolchain below it cannot build
+the module. See [CONTRIBUTING.md](../CONTRIBUTING.md#go-toolchain).
+
+## End-to-end tests on a local network
+
+The Go and contract tests stop at their own boundary: Go derives
+`attest.Params`, and the contracts are exercised in the SDK's test
+environment. `scripts/e2e-standalone.sh` joins them against a local Stellar
+network (issue #463).
+
+It derives Params from the committed fixtures with
+`cmd/attestfixture`, submits them through the `stellar` CLI, and asserts
+`get_safety`, `is_safe_masked`, `is_safe` and the example gate's
+`would_admit`/`deposit` decisions for a clear, a high and a critical subject.
+The critical subject is reputation-only, so it proves the gate checks the
+severity ceiling as well as the forbidden-mechanics mask.
+
+```sh
+stellar container start local     # or the stellar/quickstart Action in CI
+make e2e-standalone
+```
+
+The script refuses a non-loopback RPC URL. It never contacts Horizon,
+StellarExpert, an issuer domain, testnet or pubnet; the only external traffic
+is the one-time setup of the quickstart image and the `stellar` CLI. The CI job
+runs on PRs touching contracts, `internal/attest`, the mechanism fixtures,
+`cmd/attestfixture`, the script or the Makefile.
