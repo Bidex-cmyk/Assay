@@ -109,16 +109,15 @@ CI job reads it with `go-version-file: go.mod`, so raising the floor raises
 every job at once. `setup-go` also exports `GOTOOLCHAIN=local`, so a job
 running below the floor fails rather than quietly downloading a newer Go.
 
-The floor is **1.26.10** because `govulncheck` reports a reachable
-standard-library vulnerability in it: GO-2026-6809 in `crypto/x509`, on the
-path from `internal/eval/confusion.go` through `x509.Certificate.Verify`, fixed
-in Go 1.26.10. Go 1.25 is also end-of-life, and `govulncheck` reports
-reachable `net/http` vulnerabilities there — GO-2026-6617 and GO-2026-6613
-among them — both on the paths Assay uses to fetch attacker-controlled
-`stellar.toml` documents. The floor was raised from `1.22` to `1.25.13` on
-2026-10-06, from `1.25.13` to `1.26.9` on 2026-10-16, and from `1.26.9` to
-`1.26.10` on 2026-10-21, each time as a deliberate commit recorded here.
-Raise it the same way, and verify before and after:
+The floor is **1.26.10** because Go 1.25 is end-of-life and `govulncheck`
+reports reachable standard-library vulnerabilities in `net/http` (GO-2026-6617
+and GO-2026-6613 among them) and in `crypto/x509` (GO-2026-6809, fixed in
+1.26.10). These are on paths Assay uses to fetch attacker-controlled
+`stellar.toml` documents and to verify TLS certificates. The floor was raised
+from `1.22` to `1.25.13` on 2026-10-06, from `1.25.13` to `1.26.9` on
+2026-10-16, and from `1.26.9` to `1.26.10` on 2026-10-21, each time as a
+deliberate commit recorded here. Raise it the same way, and verify before and
+after:
 
 ```sh
 go run golang.org/x/vuln/cmd/govulncheck@latest ./...
@@ -156,12 +155,12 @@ Check the environment before any contract work:
 stellar --version && rustup target list --installed && make build-contract
 ```
 
-`stellar --version` must print 27.1.0 and the target list must contain
-`wasm32v1-none`; `make build-contract` then writes the optimized wasm to
-`assay-contracts/out/`. A mismatch on any of the three changes the optimized
-bytes, and therefore the hash, even when the contract source is byte for byte
-identical — the CLI also runs the wasm optimizer and checks the exported
-interface, so it is not a pass-through to `cargo build`. If
+`stellar --version` must match `STELLAR_CLI_VERSION` in the Makefile. The target
+list must contain `wasm32v1-none`; `make build-contract` then writes the
+optimized wasm to `assay-contracts/out/`. A mismatch on any of the three changes
+the optimized bytes, and therefore the hash, even when the contract source is
+byte for byte identical — the CLI also runs the wasm optimizer and checks the
+exported interface, so it is not a pass-through to `cargo build`. If
 `sha256sum assay-contracts/out/assay_safety_registry.wasm` does not match the
 [recorded wasm hash](docs/deployment.md#live-addresses), check these versions
 before suspecting a source change — and note that a mismatch is only evidence
