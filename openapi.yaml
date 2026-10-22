@@ -38,6 +38,8 @@ paths:
                     type: string
                   accountability:
                     type: string
+                  accountability_reason:
+                    type: string
                   undetermined:
                     type: boolean
                   undetermined_checks:
