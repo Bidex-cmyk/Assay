@@ -58,14 +58,14 @@ jobs:
         working-directory: assay-contracts
         run: rustup toolchain install
 
-      # Match the local ledger protocol to the Soroban SDK/CLI pinned above;
-      # Quickstart's default follows latest and can advance independently.
-      # The action waits until RPC and friendbot are healthy before continuing.
+      # Keep the local network on protocol 27, which the pinned Quickstart image
+      # supports. `latest` can advance Core past the CLI/contract toolchain.
       - name: start local Stellar network
         uses: stellar/quickstart@main
         with:
+          tag: v676-b1505.1-latest
           network: local
-          protocol_version: "28"
+          protocol_version: "27"
           enable: core,rpc,horizon
           enable_logs: "false"
 
