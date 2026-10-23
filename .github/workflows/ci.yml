@@ -79,7 +79,11 @@ jobs:
       - name: coverage report
         if: ${{ !cancelled() && hashFiles('go-test.log') != '' }}
         run: |
-          report=$(./scripts/coverage-report.sh go-test.log coverage.out)
+          if ! report=$(./scripts/coverage-report.sh go-test.log coverage.out 2>&1); then
+            echo "::warning title=Go coverage::Coverage report unavailable because the test run produced no usable coverage data."
+            printf '%s\n' "$report"
+            exit 0
+          fi
           printf '%s\n' "$report"
           {
             echo "### Go coverage"
