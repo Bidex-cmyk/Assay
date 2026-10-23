@@ -461,7 +461,6 @@ fn write_attestation(
     attested_at: u64,
 ) {
     let key = DataKey::Safety(asset.clone());
-    let previous = env.storage().persistent().get(&key);
     let safety = Safety {
         severity,
         flags,
@@ -474,10 +473,11 @@ fn write_attestation(
     // Publish after the write. Emitting before would let a storage failure
     // produce a visible "attest" for an attestation that does not exist;
     // emitting after means indexers observe writes that actually happened.
-    AttestationEvent {
+    Attested {
         asset,
-        previous,
-        current: safety,
+        severity,
+        flags,
+        attested_at,
     }
     .publish(env);
 }
@@ -686,8 +686,14 @@ impl SafetyRegistry {
 
         validate_attestation(&env, &asset, &admin, severity, flags)?;
 
-        let attested_at = env.ledger().timestamp();
-        write_attestation(&env, asset, severity, flags, evidence_hash, attested_at);
+        write_attestation(
+            &env,
+            asset,
+            severity,
+            flags,
+            evidence_hash,
+            env.ledger().timestamp(),
+        );
         extend_instance(&env);
         Ok(())
     }
@@ -696,7 +702,7 @@ impl SafetyRegistry {
     /// can cover more than a curated few per ledger of fee budget.
     ///
     /// Each element is written exactly as [`Self::attest`] writes it: the same
-    /// key, the same value, the same `AttestationEvent`, and the same validation,
+    /// key, the same value, the same `Attested` event, and the same validation,
     /// which both paths get from the same `validate_attestation`. A read after
     /// a batch is therefore indistinguishable from a read after the equivalent
     /// sequence of single calls — the property

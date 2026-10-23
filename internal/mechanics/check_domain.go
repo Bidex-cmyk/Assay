@@ -136,9 +136,6 @@ func (c DomainCheck) Run(_ context.Context, s *Subject) (Finding, error) {
 	}
 
 	if !s.Toml.Claims(s.Asset.Code, s.Asset.Issuer) {
-		if s.TomlLinked != nil {
-			return c.resolveLinked(f, s, domain, s.TomlLinked), nil
-		}
 		acc = AccountabilityUnverified
 		f.Mechanics = MechDomainUnverified
 		if s.TomlLinked != nil {
