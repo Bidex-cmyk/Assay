@@ -6,6 +6,13 @@ Report privately via [GitHub's security advisory form](https://github.com/use-as
 or by email to deekhay7534@gmail.com.
 
 Please do not open a public issue for anything in the first category below.
+The same private-first process applies if a scanner defect or other security
+failure may have produced an under-reported attestation. Include the affected
+asset and network, registry and transaction details when available, scanner
+version, and a reproduction or supporting evidence. Maintainers will coordinate
+mitigation and disclosure, notify known affected consumers, and publish a
+correction notice when it is safe to do so; see the
+[attestation correction runbook](docs/attestation-correction.md).
 
 There is no bug bounty. Assay is an early open-source project and cannot
 offer payment.
