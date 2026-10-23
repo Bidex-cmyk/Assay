@@ -261,6 +261,44 @@ pub struct AttestationEvent {
     pub current: Safety,
 }
 
+/// Event emitted when the current admin proposes a two-step transfer of the
+/// admin role to `new_admin` via [`Self::transfer_admin`].
+///
+/// Topics: `("admin_transfer_proposed", old_admin)`. The proposal is not a
+/// transfer until the pending admin calls [`Self::accept_admin`]; this event
+/// records the proposal so an indexer can see a pending handover before it
+/// completes or is withdrawn. The admin role is unchanged by this event.
+#[contractevent(topics = ["admin_transfer_proposed"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdminTransferProposed {
+    /// The current admin who proposed the transfer.
+    #[topic]
+    pub old_admin: Address,
+    /// The proposed successor.
+    pub new_admin: Address,
+    /// Ledger timestamp of the proposal.
+    pub at: u64,
+}
+
+/// Event emitted when the pending admin completes a two-step transfer via
+/// [`Self::accept_admin`], becoming the new admin.
+///
+/// Topics: `("admin_transferred", old_admin)`. Together with
+/// [`AdminTransferProposed`] and [`AdminTransferCancelled`], this makes every
+/// admin-role change observable in the event stream. The stored attestations
+/// are untouched; only the admin role moves.
+#[contractevent(topics = ["admin_transferred"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdminTransferred {
+    /// The admin who is being replaced.
+    #[topic]
+    pub old_admin: Address,
+    /// The new admin.
+    pub new_admin: Address,
+    /// Ledger timestamp of the transfer.
+    pub at: u64,
+}
+
 #[contracttype]
 enum DataKey {
     /// Contract admin, the only address permitted to attest.
@@ -299,6 +337,17 @@ pub enum Error {
     /// success for assets that were never written, and the off-chain pipeline
     /// would move on believing they had been re-attested.
     BatchTooLarge = 7,
+    /// The `asset` argument is known not to name a Stellar Asset Contract: it
+    /// is this registry's own address, the admin's address, or an address
+    /// whose type is not a contract at all (an account, a muxed account, a
+    /// claimable balance or a liquidity pool id).
+    ///
+    /// Rejected so a fat-fingered write cannot key `Safety(...)` under an
+    /// address nobody meant, pay rent on it and publish an `Attested` event
+    /// naming it. Which contract is at a given address is deliberately NOT
+    /// checked here — see [`validate_asset_address`] for the decision and for
+    /// what the caller owns instead (#349).
+    InvalidAsset = 8,
 }
 
 /// Extends the contract instance's TTL to the network maximum. Extending the
@@ -329,7 +378,14 @@ fn extend_attestation(env: &Env, key: &DataKey) {
 /// not be able to accept anything the single path refuses, and the only way to
 /// be sure of that is for both to call the same code. A reviewer can see the
 /// invariant is not bypassable by reading this function's two call sites.
-fn validate_attestation(severity: u32, flags: u32) -> Result<(), Error> {
+fn validate_attestation(
+    env: &Env,
+    asset: &Address,
+    admin: &Address,
+    severity: u32,
+    flags: u32,
+) -> Result<(), Error> {
+    validate_asset_address(env, asset, admin)?;
     if severity > SEVERITY_CRITICAL {
         return Err(Error::InvalidSeverity);
     }
@@ -337,6 +393,60 @@ fn validate_attestation(severity: u32, flags: u32) -> Result<(), Error> {
         return Err(Error::InconsistentAttestation);
     }
     Ok(())
+}
+
+/// Rejects an `asset` address that is known not to name a Stellar Asset
+/// Contract, before anything is keyed under it (#349).
+///
+/// # What is checked, and why each check is worth its cost
+///
+/// Storage is keyed by any `Address`, so a write aimed at the wrong address is
+/// fail-closed for the real asset — `get_safety` on the real SAC still returns
+/// `None` and every gate still refuses — but it is not harmless: it pays rent
+/// on an entry nobody will ever read as this asset, publishes an `Attested`
+/// event naming an address that is not this asset, and leaves an indexer
+/// something to explain. Three rules answer that. The first two are plain
+/// comparisons; the third reads the address's strkey, one host call and one
+/// small allocation, with no ledger access:
+///
+/// * **Not the registry's own address.** `attest` on the registry would key
+///   `DataKey::Safety(registry)` inside the registry's own storage, and the
+///   resulting event would read as the registry attesting itself.
+/// * **Not the admin's address.** The admin is the writer, never the subject.
+///   It is normally an account, so the rule below already covers it, but the
+///   admin is an arbitrary `Address` — `init` accepts any — and the comparison
+///   stays correct when it is a contract (a multisig, say).
+/// * **Not a non-contract address.** A Stellar Asset Contract is a contract,
+///   so an account (`G…`), a muxed account (`M…`), a claimable balance or a
+///   liquidity pool id can all be ruled out by the address's strkey version
+///   byte (SEP-23): a contract address is `C…`, and nothing else is. This is
+///   the fat-finger case the check exists for: pasting an issuer account
+///   where a SAC address belongs.
+///
+/// # What is deliberately not checked: caller responsibility
+///
+/// Whether the contract at `asset` really is the SAC for the CODE-ISSUER the
+/// scanner scanned. Answering that on-chain would mean invoking the candidate
+/// contract and trusting whatever it says about itself, which is neither cheap
+/// nor self-authenticating: an impostor contract answers for itself. The same
+/// conclusion is reached off-chain instead, by resolving CODE-ISSUER to its SAC
+/// with `stellar contract id asset` — which is what `make attest` does before
+/// it ever signs anything. So an impostor *contract* address passes this check
+/// and the attester owns having resolved the right one; the stored claim is
+/// still what the scanner concluded for the asset it scanned, bound by
+/// `evidence_hash`.
+fn validate_asset_address(env: &Env, asset: &Address, admin: &Address) -> Result<(), Error> {
+    if *asset == env.current_contract_address() || *asset == *admin {
+        return Err(Error::InvalidAsset);
+    }
+    // The off-host `ScAddress::from` conversion is compiled out of wasm builds,
+    // so the type is read from the strkey instead: `C…` is a contract, and
+    // every other version byte — account `G…`, muxed `M…`, and the tags for
+    // claimable balances and liquidity pools — cannot name a SAC.
+    match asset.to_string().to_bytes().get(0) {
+        Some(b'C') => Ok(()),
+        _ => Err(Error::InvalidAsset),
+    }
 }
 
 /// Writes one attestation and publishes its event. Shared by both write paths
@@ -446,6 +556,13 @@ impl SafetyRegistry {
         env.storage()
             .instance()
             .set(&DataKey::PendingAdmin, &new_admin);
+
+        AdminTransferProposed {
+            old_admin: admin.clone(),
+            new_admin: new_admin.clone(),
+            at: env.ledger().timestamp(),
+        }
+        .publish(&env);
         extend_instance(&env);
         Ok(())
     }
@@ -463,8 +580,21 @@ impl SafetyRegistry {
             .ok_or(Error::NoPendingAdmin)?;
         pending.require_auth();
 
+        let old_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+
         env.storage().instance().set(&DataKey::Admin, &pending);
         env.storage().instance().remove(&DataKey::PendingAdmin);
+
+        AdminTransferred {
+            old_admin: old_admin.clone(),
+            new_admin: pending.clone(),
+            at: env.ledger().timestamp(),
+        }
+        .publish(&env);
         extend_instance(&env);
         Ok(())
     }
@@ -531,7 +661,11 @@ impl SafetyRegistry {
     /// scanner: `assay attestation CODE-ISSUER` derives all three from a live
     /// scan, and `make attest` submits them. Validation here is not a
     /// formality: it enforces at write time the invariants that
-    /// [`Self::is_safe`] relies on at read time.
+    /// [`Self::is_safe`] relies on at read time. It also refuses an `asset`
+    /// that is known not to name a Stellar Asset Contract — this registry's
+    /// own address, the admin's address, or a non-contract address — with
+    /// [`Error::InvalidAsset`]; see [`validate_asset_address`] for what that
+    /// check can and cannot establish (#349).
     ///
     /// Emits an [`AttestationEvent`] with the previous value (if any) and the
     /// new value, providing an on-chain audit trail. See the event
@@ -550,7 +684,7 @@ impl SafetyRegistry {
             .ok_or(Error::NotInitialized)?;
         admin.require_auth();
 
-        validate_attestation(severity, flags)?;
+        validate_attestation(&env, &asset, &admin, severity, flags)?;
 
         write_attestation(
             &env,
@@ -578,10 +712,10 @@ impl SafetyRegistry {
     ///
     /// A batch is applied whole or not at all. Every element is validated
     /// before the first write, so a batch containing one bad element returns
-    /// [`Error::InvalidSeverity`] or [`Error::InconsistentAttestation`] and
-    /// stores nothing: there is no view in which some assets were re-attested
-    /// and others silently were not. Nothing is truncated or skipped to make a
-    /// partly-bad batch fit.
+    /// [`Error::InvalidAsset`], [`Error::InvalidSeverity`] or
+    /// [`Error::InconsistentAttestation`] and stores nothing: there is no view
+    /// in which some assets were re-attested and others silently were not.
+    /// Nothing is truncated or skipped to make a partly-bad batch fit.
     ///
     /// The host already rolls a transaction back on failure, so a batch could
     /// not half-commit even without this. The two-phase shape buys two things
@@ -640,7 +774,7 @@ impl SafetyRegistry {
         // what makes the batch all-or-nothing at the contract level rather than
         // only by the host's transaction rollback.
         for a in attestations.iter() {
-            validate_attestation(a.severity, a.flags)?;
+            validate_attestation(&env, &a.asset, &admin, a.severity, a.flags)?;
         }
 
         if attestations.is_empty() {

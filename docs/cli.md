@@ -23,6 +23,8 @@ usage:
                                   (CODE-ISSUER or SAC address), bounded by RPC event retention
   assay serve [-addr] [-history PATH]
                                   serve the HTTP API and UI
+  assay version                   print scanner identity, preimage encodings
+                                  and build (VCS, Go) information
 
 Commands that scan also accept:
   -cache-directory-ttl D   reuse a curated directory answer for D (0 disables)
@@ -54,6 +56,22 @@ Commands that scan also accept:
   as a comma-separated list or repeated. **No list is used by default**: nothing
   is hardcoded as authoritative, and no report changes unless you opt in. See
   [asset-lists.md](asset-lists.md).
+
+## Asset identifiers
+
+Every command that takes an asset accepts the same three spellings of it:
+
+| Spelling | Example |
+| --- | --- |
+| `CODE-ISSUER` (canonical) | `USDC-GA5Z…` |
+| `CODE:ISSUER`, as most Stellar tools print it | `USDC:GA5Z…` |
+| a stellar.expert asset URL, paste-able from the browser | `https://stellar.expert/explorer/public/asset/USDC-GA5Z…` |
+
+They are normalised on input, and the canonical `CODE-ISSUER` form is what
+every output — report, evidence lines, preimage — prints, so the bytes
+`evidence_hash` commits to are identical whichever form you pasted. The URL's
+`<network>` segment is not checked: which ledger the scan reads is settled by
+the scanner's network binding (#41), not by the address bar.
 
 ## assay scan
 
@@ -281,6 +299,43 @@ derived transitions. `-history` points that store at an append-only JSON Lines
 log so it survives a restart; without it, history is in memory and lost when the
 process exits. The default retention is 256 observations per asset and the
 policy is in [history.md](history.md).
+
+## assay version
+
+Prints the scanner identity a verifier needs before comparing hashes: which
+scanner produces this binary's reports, which preimage encoding it binds, and
+how the binary was built. `assay -version` and `assay --version` print the
+same thing.
+
+```
+./assay version
+```
+
+One fact per line:
+
+```
+scanner:       devel
+preimage:      assay-evidence-v4
+encodings:     assay-evidence-v1 assay-evidence-v2 assay-evidence-v3 assay-evidence-v4
+module:        github.com/use-assay/assay devel
+go:            go1.26.9
+vcs.revision:  7f3c1ab4e0d9c8b2a6f5d4c3b2a1908f7e6d5c4b
+vcs.modified:  false
+```
+
+- `scanner` is `attest.ScannerIdentity` — the same identity the v4 preimage's
+  `scanner` line binds, so the printed value and the hashed value cannot
+  disagree for the same binary. `devel` means the binary was built from a
+  checkout without a release tag (see [verifying.md](verifying.md)).
+- `preimage` is the newest preimage encoding this build writes. `encodings`
+  lists every encoding the build still understands, oldest first, so a
+  verifier knows whether the binary can reproduce an already-recorded
+  `evidence_hash` under its original encoding.
+- `module`, `module version`, `go`, `vcs.revision` and `vcs.modified` come
+  from the build info the Go toolchain stamps into the binary — the same
+  facts `go version -m` prints, reduced to the ones a verifier needs. The VCS
+  fields read `unknown` when the binary carries no VCS stamp (for example a
+  release built with `-buildvcs=false`).
 
 ## Exit codes
 
