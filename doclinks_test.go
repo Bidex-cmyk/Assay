@@ -104,7 +104,7 @@ func docLinkFailures(repoRoot string) ([]string, error) {
 		}
 		b, err := os.ReadFile(path)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("read %s: %w", path, err)
 		}
 		set := markdownAnchors(string(b))
 		anchors[path] = set
@@ -187,7 +187,10 @@ func markdownFiles(repoRoot string) ([]string, error) {
 		}
 		return nil
 	})
-	return files, err
+	if err != nil {
+		return nil, fmt.Errorf("walk docs: %w", err)
+	}
+	return files, nil
 }
 
 func relPath(root, path string) string {
