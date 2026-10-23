@@ -47,7 +47,7 @@ func (c CanonicalTime) Time() time.Time { return time.Time(c) }
 // Equal reports whether c and t represent the same instant.
 func (c CanonicalTime) Equal(t time.Time) bool { return c.Time().Equal(t) }
 
-// Format renders the underlying time with the requested layout.
+// Format returns the formatted representation of the underlying instant.
 func (c CanonicalTime) Format(layout string) string { return c.Time().Format(layout) }
 
 // IsZero reports whether the instant is the zero time, mirroring
@@ -93,27 +93,12 @@ func (a Asset) String() string { return a.Code + "-" + a.Issuer }
 // outside claim by constructing an Evidence with its source and URL, there is
 // no code path that renders someone else's data as an Assay conclusion.
 type Evidence struct {
-	Source string `json:"source"`
-	// URL is the location the claim is attributed to. It keeps its original
-	// per-path meaning so that no attestation already on chain moves: on a
-	// successful fetch it is the FINAL location, after redirects; on a failed
-	// fetch it is the REQUESTED location, because no final document existed.
-	// RequestedURL carries the other half.
-	URL string `json:"url"`
-	// RequestedURL is the SEP-1 well-known location derived from home_domain —
-	// the URL Assay asked for. It is recorded alongside URL so an auditor can
-	// see whether a claim came from the requested host or from somewhere a
-	// redirect moved it to, which URL alone cannot express. On a failed fetch
-	// it equals URL (the request never produced a final location).
-	//
-	// It is deliberately OUTSIDE the evidence_hash preimage, which renders only
-	// Source/URL/Claim: adding it must not change the hash of a report whose
-	// claim did not change, or every existing attestation would stop
-	// reproducing. A future encoding may bind it; that would be a version bump.
+	Source       string `json:"source"`
+	URL          string `json:"url"`
 	RequestedURL string `json:"requested_url,omitempty"`
 	Claim        string `json:"claim"`
-	// RetrievedAt is when this specific fact was observed from the source (or
-	// when the attempt was made, if the fetch failed).
+	// RetrievedAt is when this specific fact was observed from the source
+	// (or when the attempt was made, if the fetch failed).
 	//
 	// Clock source: scanner host wall clock (time.Now().UTC()).
 	// Precision: nanoseconds in memory (time.Time); on the wire it marshals
@@ -485,26 +470,16 @@ type Report struct {
 	// carry the fact that it was produced under identity binding.
 	ScannerBound bool `json:"scanner_bound,omitempty"`
 
-	Mechanics     Mechanic   `json:"-"`
-	MechanicNames []string   `json:"mechanics"`
-	Findings      []Finding  `json:"findings"`
-	Evidence      []Evidence `json:"evidence"`
+	Mechanics     Mechanic      `json:"-"`
+	MechanicNames []string      `json:"mechanics"`
+	Findings      []Finding     `json:"findings"`
+	Evidence      []Evidence    `json:"evidence"`
+	ScannedAt     CanonicalTime `json:"scanned_at"`
 
 	// ObservationWindowStart is the start of the observation window for this report.
 	ObservationWindowStart time.Time `json:"observation_window_start,omitempty"`
 	// ObservationWindowEnd is the end of the observation window for this report.
 	ObservationWindowEnd time.Time `json:"observation_window_end,omitempty"`
-	// ScannedAt is when the scan run started (the Subject.ScannedAt timestamp).
-	// It is the report-level timestamp.
-	//
-	// Clock source: scanner host wall clock (time.Now().UTC()).
-	// Precision: nanoseconds in memory (time.Time), formatted as RFC 3339 in JSON.
-	//
-	// Because individual sources are fetched sequentially over an outer context
-	// timeout of up to 30 seconds, ScannedAt is an approximation across the
-	// sequential fetch window; individual Evidence items carry their own
-	// RetrievedAt completion times. See docs/timestamps.md.
-	ScannedAt CanonicalTime `json:"scanned_at"`
 }
 
 // Engine runs a set of checks over a Subject.
@@ -567,14 +542,14 @@ func (e *Engine) Run(ctx context.Context, s *Subject) (*Report, error) {
 	rep := &Report{
 		SchemaVersion:        ReportSchemaVersion,
 		Asset:                s.Asset,
-		Accountability:       AccountabilityUnknown,
-		ScannedAt:            CanonicalTime(scannedAt),
 		Network:              s.Network,
+		Accountability:       AccountabilityUnknown,
+		ScannedAt:            NewCanonicalTime(scannedAt),
 		CheckSet:             e.CheckIDs(),
 		Findings:             []Finding{},
 		Evidence:             []Evidence{},
 		UndeterminedChecks:   []string{},
-		UndeterminedBySource: make(map[string]int),
+		UndeterminedBySource: map[string]int{},
 	}
 
 	totalChecks := len(e.Checks)

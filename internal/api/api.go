@@ -21,11 +21,6 @@ import (
 //go:embed ui/index.html
 var uiFS embed.FS
 
-// Scanner describes what the API server needs from a scanner.
-type Scanner interface {
-	ScanWithHolder(ctx context.Context, a mechanics.Asset, holder string) (*mechanics.Report, error)
-}
-
 // Server serves scan results and recorded observation history.
 type Server struct {
 	Scanner *scan.Scanner
@@ -52,7 +47,12 @@ type Server struct {
 // NewServer returns a Server backed by the production scanner and an in-memory
 // observation history that does not survive a restart.
 func NewServer(log *slog.Logger) *Server {
-	return &Server{Scanner: scan.New(), History: history.New(), Metrics: NewMetrics(), Log: log}
+	return NewServerWithScanner(scan.New(), log)
+}
+
+// NewServerWithScanner returns a Server backed by the supplied scanner.
+func NewServerWithScanner(scanner *scan.Scanner, log *slog.Logger) *Server {
+	return &Server{Scanner: scanner, History: history.New(), Metrics: NewMetrics(), Log: log}
 }
 
 // Routes lists every route Handler registers, in the "METHOD /path" form

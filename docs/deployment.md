@@ -455,6 +455,41 @@ From this change onward the contract extends TTLs itself:
 The maximum comes from the host (`env.storage().max_ttl()`), not from a
 constant in the contract, so a change in network parameters needs no redeploy.
 
+### Checking an entry's remaining lifetime
+
+Fetch the contract-code entry and compare its `liveUntilLedgerSeq` with the
+latest ledger sequence in the JSON response. Their difference is the remaining
+lifetime in ledgers; at roughly five seconds per ledger, it gives an
+approximate time. For the registry wasm above:
+
+```sh
+stellar ledger entry fetch contract-code --wasm-hash c4105b91b3ceae95b5a225c55bc6981b3dcf71d07fdd0ee5c79a21d25edd301b --network testnet --output json
+```
+
+This checks the code entry, not each asset's persistent contract-data entry.
+On 2026-09-30, a direct testnet RPC `getLedgerEntries` query for this code hash
+reported `liveUntilLedgerSeq: 0` at latest ledger `4,951,623`: the code was
+already archived, so no positive remaining lifetime could be measured. The
+registry instance and attestations were also reported archived above. These
+are measured chain values, not an estimate from the nominal ~180-day maximum.
+
+Archival is not a silent `None`: Soroban restores an archived entry when a
+transaction accesses it. A successful read returns the original attestation
+and the consuming transaction pays the restore cost; freshness is still
+decided by the gate's `max_age_secs`. If restoration cannot be paid or the
+transaction fails, the gate does not admit the operation. See [What a read of
+an archived entry actually does](#what-a-read-of-an-archived-entry-actually-does).
+
+The registry currently documented above predates TTL-on-write and cannot be
+upgraded in place. Do not assume re-attesting against that address extends
+entries to the maximum. A registry deployed with the handling tracked in
+[#87](https://github.com/use-assay/Assay/issues/87) extends entries on
+attestation; keeping attestations refreshed remains the operator's
+responsibility, as covered by the [re-attestation runbook
+(#115)](https://github.com/use-assay/Assay/issues/115). Migration to that
+code requires the new-deployment and re-attestation steps in
+[Migrating to a registry with `revoke`](#migrating-to-a-registry-with-revoke).
+
 Why writes only:
 
 - **Retention follows the writer.** Keeping an attestation live is the

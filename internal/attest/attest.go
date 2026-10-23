@@ -43,9 +43,21 @@ import (
 // because the attestations it describes were hashed without one (#269).
 const PreimageVersion = "assay-evidence-v1"
 
-// PreimageVersionCheckSet adds a `checks` line naming the checks the engine
-// actually ran, so a report produced by an engine with a check removed cannot
-// hash the same as one produced by the full engine.
+// ScannerIdentity is the module version that produced the report.
+var ScannerIdentity = scannerIdentity()
+
+func scannerIdentity() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok || info.Main.Version == "" || info.Main.Version == "(devel)" {
+		return "devel"
+	}
+	return info.Main.Version
+}
+
+// PreimageVersionCheckSet is the encoding used once a report binds its check
+// set. It adds a `checks` line naming the checks the engine actually ran, so a
+// report produced by an engine with a check removed cannot hash the same as one
+// produced by the full engine.
 //
 // It is a v2 rather than an edit to v1 for the same reason the version line
 // exists: every attestation already on-chain was hashed under v1, and must
@@ -453,11 +465,15 @@ func renderPreimage(rep *mechanics.Report, version string) string {
 	line(&b, "escalated", strconv.FormatBool(rep.Escalated))
 	line(&b, "mechanics", strconv.FormatUint(uint64(rep.Mechanics), 10))
 	line(&b, "accountability", string(rep.Accountability))
-
-	if rank >= 2 {
+	// A bound check set is written as its own line so a verifier can name the
+	// checks a report is missing. Reports with no check set omit it entirely,
+	// keeping their bytes identical to the v1 encoding.
+	if len(rep.CheckSet) > 0 {
 		checks := append([]string(nil), rep.CheckSet...)
 		sort.Strings(checks)
 		line(&b, "checks", strings.Join(checks, ","))
+	} else {
+		line(&b, "checks", "")
 	}
 	if rank >= 3 {
 		line(&b, "network", string(rep.Network))
@@ -486,14 +502,12 @@ func renderPreimage(rep *mechanics.Report, version string) string {
 func preimageVersion(rep *mechanics.Report) (string, error) {
 	cs, net, sb := len(rep.CheckSet) > 0, rep.Network != "", rep.ScannerBound
 	switch {
-	case !cs && !net && !sb:
-		return PreimageVersion, nil
-	case cs && !net && !sb:
-		return PreimageVersionCheckSet, nil
-	case cs && net && !sb:
-		return PreimageVersionNetwork, nil
-	case cs && net && sb:
-		return PreimageVersionScanner, nil
+	case rep.Network != "" || rep.ScannerBound:
+		return PreimageVersionNetwork
+	case len(rep.CheckSet) > 0:
+		return PreimageVersionCheckSet
+	default:
+		return PreimageVersion
 	}
 	return "", fmt.Errorf("%w: check set %t, network %t, scanner %t "+
 		"(a network needs a check set; a scanner needs both)", ErrUnencodable, cs, net, sb)

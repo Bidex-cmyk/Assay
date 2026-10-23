@@ -2,7 +2,6 @@ package mechanics_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"

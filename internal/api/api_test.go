@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/use-assay/assay/internal/api"
+	"strings"
 )
 
 func newTestServer() http.Handler {

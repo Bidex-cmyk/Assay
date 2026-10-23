@@ -81,7 +81,7 @@ func TestNetworkBoundReportIsV3WithThePassphrase(t *testing.T) {
 		t.Fatalf("FromReport: %v", err)
 	}
 	if !strings.HasPrefix(params.Preimage, attest.PreimageVersionNetwork+"\n") {
-		t.Fatalf("network-bound report is not v3: %q", firstLine(params.Preimage))
+		t.Fatalf("network-bound report is not v3: %q", networkFirstLine(params.Preimage))
 	}
 	if params.Network != string(horizon.PublicNet) {
 		t.Fatalf("params.Network = %q, want the full pubnet passphrase", params.Network)
@@ -115,7 +115,7 @@ func TestUnboundReportKeepsItsEarlierEncoding(t *testing.T) {
 		t.Fatalf("FromReport v2: %v", err)
 	}
 	if !strings.HasPrefix(params.Preimage, attest.PreimageVersionCheckSet+"\n") {
-		t.Fatalf("check-set-only report is not v2: %q", firstLine(params.Preimage))
+		t.Fatalf("check-set-only report is not v2: %q", networkFirstLine(params.Preimage))
 	}
 	if strings.Contains(params.Preimage, "network\t") {
 		t.Fatalf("a report with no network must not grow a network line:\n%s", params.Preimage)
@@ -130,7 +130,7 @@ func TestUnboundReportKeepsItsEarlierEncoding(t *testing.T) {
 		t.Fatalf("FromReport v1: %v", err)
 	}
 	if !strings.HasPrefix(params.Preimage, attest.PreimageVersion+"\n") {
-		t.Fatalf("bare report is not v1: %q", firstLine(params.Preimage))
+		t.Fatalf("bare report is not v1: %q", networkFirstLine(params.Preimage))
 	}
 }
 
@@ -157,7 +157,7 @@ func TestNetworkChangeMovesTheHash(t *testing.T) {
 	}
 }
 
-func firstLine(s string) string {
+func networkFirstLine(s string) string {
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
 		return s[:i]
 	}

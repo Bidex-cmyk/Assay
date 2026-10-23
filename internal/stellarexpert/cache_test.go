@@ -295,12 +295,9 @@ func TestFailedFetchIsNotCached(t *testing.T) {
 	if answer.Value == nil {
 		t.Fatal("the recovered answer was dropped")
 	}
-	// The failing fetch is retried (DefaultRetryOptions().Attempts transient
-	// attempts, issue #127), and the recovered fetch is a fresh request: the
-	// outage was never cached, which is what this test is about.
-	want := int64(stellarexpert.DefaultRetryOptions().Attempts) + 1
-	if got := atomic.LoadInt64(&requests); got != want {
-		t.Errorf("server saw %d requests, want %d: the failure was not re-fetched", got, want)
+	wantRequests := int64(1 + stellarexpert.DefaultRetryOptions().Attempts)
+	if got := atomic.LoadInt64(&requests); got != wantRequests {
+		t.Errorf("server saw %d requests, want %d: failed attempts must not be cached, and recovery must be fetched", got, wantRequests)
 	}
 }
 

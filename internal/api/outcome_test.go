@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	"github.com/use-assay/assay/internal/api"
-	"github.com/use-assay/assay/internal/stellarexpert"
+	"github.com/use-assay/assay/internal/scan"
 )
 
 // A valid mainnet asset: USDC. Its issuer has no home_domain dependency in
@@ -79,7 +79,7 @@ func newLogServer(t *testing.T) *logServer {
 	t.Helper()
 	buf := newLogBuffer()
 	log := slog.New(slog.NewJSONHandler(buf, nil))
-	srv := api.NewServer(log)
+	srv := api.NewServerWithScanner(scan.NewWithOptions(scan.Options{NoReputationCache: true}), log)
 
 	// horizonStub serves the /assets and /accounts endpoints the scanner
 	// needs, always answering with a well-formed record.
@@ -150,7 +150,7 @@ func (h *horizonStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"_embedded":{"records":[{"asset_type":"credit_alphanum4","asset_code":"` + code + `","asset_issuer":"` + issuer + `","flags":{"auth_required":false,"auth_revocable":false,"auth_immutable":true,"auth_clawback_enabled":false},"accounts":{"authorized":1,"unauthorized":0}}]}}`))
 	case strings.HasPrefix(r.URL.Path, "/accounts/"):
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"account_id":"GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN","home_domain":"example.com","flags":{"auth_required":false,"auth_revocable":false,"auth_immutable":true,"auth_clawback_enabled":false}}`))
+		_, _ = w.Write([]byte(`{"account_id":"GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN","home_domain":"127.0.0.1","flags":{"auth_required":false,"auth_revocable":false,"auth_immutable":true,"auth_clawback_enabled":false}}`))
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}

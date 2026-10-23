@@ -106,7 +106,7 @@ type commandDeps struct {
 	stderr io.Writer
 	// scan fetches and classifies one asset. It is injected so tests never
 	// touch the network.
-	scan func(context.Context, mechanics.Asset) (*mechanics.Report, error)
+	scan func(context.Context, mechanics.Asset, []string) (*mechanics.Report, error)
 	// serve starts the HTTP API. It is injected so dispatch can be tested
 	// without binding a port.
 	serve func([]string, *slog.Logger) error
@@ -117,8 +117,8 @@ func defaultDeps() commandDeps {
 	return commandDeps{
 		stdout: os.Stdout,
 		stderr: os.Stderr,
-		scan: func(ctx context.Context, a mechanics.Asset) (*mechanics.Report, error) {
-			return scan.New().Scan(ctx, a)
+		scan: func(ctx context.Context, a mechanics.Asset, lists []string) (*mechanics.Report, error) {
+			return newScanner(lists).Scan(ctx, a)
 		},
 		serve: runServe,
 	}
@@ -233,7 +233,7 @@ func runScan(args []string, d commandDeps) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	report, err := scanFn(ctx, asset)
+	report, err := d.scan(ctx, asset, assetLists())
 	if err != nil {
 		return err
 	}
@@ -394,25 +394,7 @@ func runAttestation(args []string, d commandDeps) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	scanFn := scanFuncFor(assetLists(), d)
-	finish := func() {}
-	recordingDir := ""
-	if *bundleOut != "" {
-		dir, err := os.MkdirTemp("", "assay-bundle-*")
-		if err != nil {
-			return fmt.Errorf("create bundle recording directory: %w", err)
-		}
-		defer func() { _ = os.RemoveAll(dir) }()
-		recordingDir = dir
-		// Record into a private directory first; the archive is written only
-		// after the report is derived, so a failed scan leaves no half bundle.
-		scanFn, finish, err = scanFuncForRecording(assetLists(), d, recordingDir, "")
-		if err != nil {
-			return err
-		}
-	}
-
-	report, err := scanFn(ctx, asset)
+	report, err := d.scan(ctx, asset, assetLists())
 	if err != nil {
 		return err
 	}
@@ -490,7 +472,7 @@ func runHistory(args []string, d commandDeps) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	report, err := scanFuncFor(assetLists(), d)(ctx, asset)
+	report, err := d.scan(ctx, asset, assetLists())
 	if err != nil {
 		return err
 	}
@@ -591,6 +573,7 @@ func runServe(args []string, log *slog.Logger) error {
 		return fmt.Errorf("serve: %w", err)
 	}
 
+	srv := api.NewServer(log)
 	// The server is where a list configuration matters most: every scan it
 	// serves consults the same configured lists, attributed the same way, and
 	// records them in the observation history like any other evidence.

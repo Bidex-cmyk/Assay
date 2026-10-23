@@ -219,7 +219,7 @@ func TestSubjectRecordsPerSourceFetchTimes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if !rep.ScannedAt.Time().Equal(sub.ScannedAt) {
+	if !rep.ScannedAt.Time().Equal(sub.ScannedAt.Truncate(time.Second)) {
 		t.Errorf("Report.ScannedAt = %s, want the scan start %s",
 			rep.ScannedAt.Time().Format(time.RFC3339Nano), sub.ScannedAt.Format(time.RFC3339Nano))
 	}

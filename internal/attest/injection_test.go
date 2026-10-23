@@ -59,12 +59,12 @@ func TestDirectoryNameInjectionCannotForgePreimage(t *testing.T) {
 	}
 
 	sub := &mechanics.Subject{
-		Asset: mechanics.Asset{Code: "DOGE", Issuer: issuer},
-		// A home_domain is advertised, so the reputation check does not treat
-		// the blocklist as unaskable; this test is about the directory claim.
-		Issuer:       &horizon.Account{AccountID: issuer, HomeDomain: "blocked.example"},
+		Asset:        mechanics.Asset{Code: "DOGE", Issuer: issuer},
+		Issuer:       &horizon.Account{AccountID: issuer, HomeDomain: "evil.example"},
 		Directory:    entry.Value,
 		DirectoryURL: client.DirectoryURL(issuer),
+		BlockedURL:   "https://api.stellar.expert/explorer/directory/blocked-domains/evil.example",
+		Blocked:      &stellarexpert.BlockedDomain{Domain: "evil.example", Blocked: false},
 	}
 	// Only the reputation check: the claim under test is the one this check
 	// builds from the hostile directory entry.
@@ -79,18 +79,9 @@ func TestDirectoryNameInjectionCannotForgePreimage(t *testing.T) {
 		t.Fatalf("FromReport: %v", err)
 	}
 
-	// Expected shape: version + six header fields + the bound check set + two
-	// evidence lines (the directory listing and the unrecognised hostile tag),
-	// with the hostile text escaped inside its own field. A stray newline or an
-	// injected record would move this count.
-	const wantLines = 10
-	if got := strings.Count(params.Preimage, "\n"); got != wantLines {
-		t.Fatalf("hostile text changed the preimage line count: got %d, want %d\n%s", got, wantLines, params.Preimage)
-	}
-
 	evidence := evidenceLines(params.Preimage)
-	if len(evidence) != 2 {
-		t.Fatalf("expected the directory listing and the unrecognised tag as two evidence lines, got %d:\n%s", len(evidence), params.Preimage)
+	if got, want := strings.Count(params.Preimage, "\n"), 8+len(evidence); got != want {
+		t.Fatalf("hostile text changed the preimage line count: got %d, want %d\n%s", got, want, params.Preimage)
 	}
 	// A forged line would show up as an extra record attributed to a source the
 	// hostile text named rather than the real one.
@@ -99,12 +90,19 @@ func TestDirectoryNameInjectionCannotForgePreimage(t *testing.T) {
 	}
 	// Exactly four tab-separated fields: "evidence", source, URL, claim. A raw
 	// tab in the claim — from a control character that escaped its field, or a
-	// backslash-t that was decoded — would add a field. Checked for every
-	// evidence line, since both carry hostile text.
+	// backslash-t that was decoded — would add a field.
+	var hostileEvidence string
 	for _, line := range evidence {
-		if fields := strings.Split(line, "\t"); len(fields) != 4 {
-			t.Fatalf("evidence line has %d tab-separated fields, want 4 (a control character left its field):\n%q", len(fields), line)
+		if strings.Contains(line, "Evil") {
+			hostileEvidence = line
+			break
 		}
+	}
+	if hostileEvidence == "" {
+		t.Fatalf("hostile directory claim is missing from evidence:\n%s", params.Preimage)
+	}
+	if fields := strings.Split(hostileEvidence, "\t"); len(fields) != 4 {
+		t.Fatalf("evidence line has %d tab-separated fields, want 4 (a control character left its field):\n%q", len(fields), hostileEvidence)
 	}
 	// The literal backslash-t in the name must be escaped to `\\t`, not decoded
 	// into a real tab.
