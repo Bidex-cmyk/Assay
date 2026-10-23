@@ -67,6 +67,10 @@ and seven carry some power. So `clear` is the overwhelmingly common answer on
 the network, and a sample that did not reflect that would be measuring the
 wrong thing.
 
+For a dated comparison of the 18 scan subjects and StellarExpert's numeric
+rating, including fresh scans of the full top-50 fixture, see
+[severity-rating-comparison.md](severity-rating-comparison.md).
+
 `DOGE` is the most informative row in the table: base severity `0`, final
 severity `4`. Capability analysis honestly returns `clear` for a known scam,
 because its issuer genuinely holds no power over a holder's balance. It is
