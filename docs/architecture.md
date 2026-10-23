@@ -21,50 +21,6 @@ The split is also the reason the leaf fetchers (`internal/horizon`,
 transport and a clean signature, so it can be extracted into a shared
 ledger-access library later without untangling judgment logic from HTTP.
 
-## Data flow
-
-From external sources, through the fetchers and the checks, to the on-chain
-attestation and the contracts that read it:
-
-```mermaid
-flowchart LR
-    subgraph sources["External sources (read-only)"]
-        HZ["Horizon<br/>issuer flags, account, trustline"]
-        TOML["Issuer stellar.toml<br/>SEP-1 home domain"]
-        EXP["StellarExpert<br/>curated directory, blocked domains"]
-    end
-
-    subgraph scanpkg["internal/scan — the only network I/O for a scan"]
-        FETCH["horizon + sep1 + stellarexpert<br/>every source fetched once"]
-        SUBJ["mechanics.Subject<br/>all signals, with per-source fetch times"]
-        FETCH --> SUBJ
-    end
-
-    subgraph core["Pure core — no I/O"]
-        MECH["internal/mechanics<br/>checks: Subject to Report"]
-        ATTEST["internal/attest<br/>Report to attest() args<br/>plus evidence_hash"]
-        MECH --> ATTEST
-    end
-
-    REG["safety-registry contract<br/>attest / get_safety / is_safe"]
-    GATE["example-gate contract<br/>refuses assets it cannot hold"]
-
-    HZ --> FETCH
-    TOML --> FETCH
-    EXP --> FETCH
-    SUBJ -->|Subject| MECH
-    ATTEST -->|attest args| REG
-    REG -->|get_safety| GATE
-```
-
-A second path observes the same reports over time rather than acting on them:
-`internal/mechanics` produces an observation, `internal/history` appends it,
-and `internal/temporal` subtracts one observation from another to answer what
-changed. `internal/api` exposes both the current scan and the history over
-HTTP. Neither path feeds back into a check.
-
-## Where I/O is confined
-
 | Kind of I/O | Where it lives | Everything else |
 | --- | --- | --- |
 | Outbound HTTP for a scan | `internal/scan`, via the three leaf fetchers | Checks in `internal/mechanics` are pure |
@@ -115,6 +71,10 @@ The two Soroban contracts:
 | --- | --- | --- |
 | `safety-registry` | Stores attestations produced off-chain and serves them: `attest`, `get_safety`, `is_safe`, `is_safe_masked`, `revoke`, `init`. | On-chain only. A contract cannot fetch, so it does not scan — it stores a severity and a bitset that `evidence_hash` makes checkable. |
 | `example-gate` | A worked integrator: refuses a deposit in an asset whose issuer can confiscate or freeze, by calling `get_safety`. | Depends only on the registry's interface, not on Assay at build time. |
+
+## Cross-link
+
+Refer to `pipeline.md` for a per-asset walk-through of the scan-to-gate path using the DOGE example.
 
 ## Dependency direction
 
