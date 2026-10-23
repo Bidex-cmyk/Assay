@@ -1673,6 +1673,175 @@ fn accept_admin_consumes_the_pending_nomination() {
     assert_eq!(err, Ok(Error::NoPendingAdmin));
 }
 
+/// A registry that has never seen a nomination must refuse `accept_admin` with
+/// `NoPendingAdmin`, not succeed quietly and not fail on auth. This is the
+/// plain form of the state the probes in
+/// `transfer_admin_rejects_unauthorized_caller` and
+/// `accept_admin_consumes_the_pending_nomination` meet as a residue: here the
+/// slot starts empty, so a mutated `accept_admin` that invents an admin (or
+/// reads an uncleared slot as present) is caught on a fresh registry too.
+#[test]
+fn accept_admin_without_a_pending_nomination_returns_no_pending_admin() {
+    let (_env, client, _admin) = setup();
+
+    let err = client
+        .try_accept_admin()
+        .expect_err("accept without a nomination must be refused");
+    assert_eq!(err, Ok(Error::NoPendingAdmin));
+}
+
+/// Only the nominated address may complete the transfer. The `MockAuth` grants
+/// the intruder authorization for this very call, so the rejection below is
+/// the contract's `require_auth` on the stored `PendingAdmin` and not an
+/// artefact of the harness — without it (mutation R-M9) the call succeeds and
+/// the promotion happens on the intruder's initiative. Admin rotation decides
+/// who may write attestations, so "the wrong key cannot turn the lock" is the
+/// property, and the probe after the rejection shows what the failed accept
+/// left behind: the nomination still belongs to the successor, who completes
+/// it, and the intruder never holds the role.
+#[test]
+fn accept_admin_rejects_a_caller_other_than_the_pending_admin() {
+    let env = Env::default();
+    let contract_id = env.register(SafetyRegistry, ());
+    let client = SafetyRegistryClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.init(&admin);
+
+    env.mock_all_auths();
+    let successor = Address::generate(&env);
+    client.transfer_admin(&successor);
+
+    let intruder = Address::generate(&env);
+    let err = client
+        .mock_auths(&[MockAuth {
+            address: &intruder,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "accept_admin",
+                args: ().into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .try_accept_admin()
+        .expect_err("only the pending admin may accept the transfer");
+    // As in `transfer_admin_rejects_unauthorized_caller`, the rejection is the
+    // host's auth error rather than a contract `Error`; what matters is that
+    // it is one and that it changed nothing.
+    assert!(err.is_err());
+
+    // The failed accept consumed nothing: the successor's own nomination is
+    // still the one in the slot, and completing it installs the successor.
+    env.mock_all_auths();
+    client.accept_admin();
+
+    // The intruder never held the role: a write under the intruder's own
+    // explicit authorization is still refused, while the successor's lands.
+    let asset = Address::generate(&env);
+    let err = client
+        .mock_auths(&[MockAuth {
+            address: &intruder,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "attest",
+                args: (&asset, SEVERITY_CLEAR, 0u32, hash(&env)).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .try_attest(&asset, &SEVERITY_CLEAR, &0, &hash(&env))
+        .expect_err("the intruder must not gain the admin role");
+    assert!(err.is_err());
+
+    client
+        .mock_auths(&[MockAuth {
+            address: &successor,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "attest",
+                args: (&asset, SEVERITY_CLEAR, 0u32, hash(&env)).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .attest(&asset, &SEVERITY_CLEAR, &0, &hash(&env));
+    assert!(client.get_safety(&asset).is_some());
+}
+
+/// A second nomination replaces the first; it does not queue behind it and it
+/// does not merge with it. The superseded address must find the door locked —
+/// its own authorization no longer matches the stored `PendingAdmin` — and the
+/// superseding one must find it open, after which the nomination is consumed
+/// as usual. Writing `PendingAdmin` only when the slot is empty (mutation
+/// R-M10) makes the first nomination sticky: the superseded address would
+/// still accept, and the assertion below that its accept fails is the catch.
+/// The final probes tie the completed transfer to the role itself: the old
+/// admin loses `attest`, the superseding admin gains it.
+#[test]
+fn second_transfer_admin_nomination_supersedes_the_first() {
+    let env = Env::default();
+    let contract_id = env.register(SafetyRegistry, ());
+    let client = SafetyRegistryClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    client.init(&admin);
+    env.mock_all_auths();
+
+    let first = Address::generate(&env);
+    let superseding = Address::generate(&env);
+    client.transfer_admin(&first);
+    client.transfer_admin(&superseding);
+
+    let err = client
+        .mock_auths(&[MockAuth {
+            address: &first,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "accept_admin",
+                args: ().into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .try_accept_admin()
+        .expect_err("a superseded nomination must not be acceptable");
+    assert!(err.is_err());
+
+    // The slot holds exactly one nomination — the second one. It accepts, and
+    // is consumed, exactly as an uncontested nomination would be.
+    env.mock_all_auths();
+    client.accept_admin();
+    let err = client
+        .try_accept_admin()
+        .expect_err("the superseding nomination must be consumed by its acceptance");
+    assert_eq!(err, Ok(Error::NoPendingAdmin));
+
+    // The role followed the nomination that was accepted: the old admin's
+    // write is refused, the superseding admin's lands.
+    let asset = Address::generate(&env);
+    let err = client
+        .mock_auths(&[MockAuth {
+            address: &admin,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "attest",
+                args: (&asset, SEVERITY_CLEAR, 0u32, hash(&env)).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .try_attest(&asset, &SEVERITY_CLEAR, &0, &hash(&env))
+        .expect_err("the old admin must not hold the role after any accept");
+    assert!(err.is_err());
+
+    client
+        .mock_auths(&[MockAuth {
+            address: &superseding,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "attest",
+                args: (&asset, SEVERITY_CLEAR, 0u32, hash(&env)).into_val(&env),
+                sub_invokes: &[],
+            },
+        }])
+        .attest(&asset, &SEVERITY_CLEAR, &0, &hash(&env));
+    assert!(client.get_safety(&asset).is_some());
+}
+
 /// `attest_many` is all-or-nothing (threat model class 3). The fixed-position
 /// test above covers one size and one position; this sweeps batch size
 /// (1…[`MAX_BATCH_SIZE`]), the position of the invalid element, and the kind of
