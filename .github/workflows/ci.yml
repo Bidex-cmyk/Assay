@@ -54,6 +54,12 @@ jobs:
       - name: test reproducibility script
         run: make test-reproducibility
 
+      - name: test attestation run record
+        run: make test-attest-run
+
+      - name: test Stellar CLI version guard
+        run: make test-stellar-cli-version
+
       # Tests must pass without network access: every check is a pure function
       # over fixtures captured under internal/*/testdata.
       #
@@ -73,7 +79,11 @@ jobs:
       - name: coverage report
         if: ${{ !cancelled() && hashFiles('go-test.log') != '' }}
         run: |
-          report=$(./scripts/coverage-report.sh go-test.log coverage.out)
+          if ! report=$(./scripts/coverage-report.sh go-test.log coverage.out 2>&1); then
+            echo "::warning title=Go coverage::Coverage report unavailable because the test run produced no usable coverage data."
+            printf '%s\n' "$report"
+            exit 0
+          fi
           printf '%s\n' "$report"
           {
             echo "### Go coverage"
@@ -115,7 +125,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        go-version: ["1.26.x", "1.27.x"]
+        go-version: ["1.26.10", "1.27.x"]
     steps:
       - uses: actions/checkout@v7.0.1
 
@@ -365,11 +375,16 @@ jobs:
         run: ./scripts/check-codeowners.sh
 
       - name: check maintainer-owned paths
+        env:
+          # The gate's test-vector digest rule accepts an explicit maintainer
+          # label as an alternative to a PreimageVersion bump (#286), so the
+          # PR's labels travel with the invocation.
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ' ') }}
         run: |
           BASE=$(git merge-base origin/${{ github.base_ref }} ${{ github.event.pull_request.head.sha }})
 
           set +e
-          out=$(./scripts/merge-gate.sh "$BASE" ${{ github.event.pull_request.head.sha }} 2>&1)
+          out=$(MERGE_GATE_LABELS="$PR_LABELS" ./scripts/merge-gate.sh "$BASE" ${{ github.event.pull_request.head.sha }} 2>&1)
           rc=$?
           set -e
 
