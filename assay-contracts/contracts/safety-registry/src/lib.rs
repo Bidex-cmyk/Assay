@@ -261,6 +261,44 @@ pub struct AttestationEvent {
     pub current: Safety,
 }
 
+/// Event emitted when the current admin proposes a two-step transfer of the
+/// admin role to `new_admin` via [`Self::transfer_admin`].
+///
+/// Topics: `("admin_transfer_proposed", old_admin)`. The proposal is not a
+/// transfer until the pending admin calls [`Self::accept_admin`]; this event
+/// records the proposal so an indexer can see a pending handover before it
+/// completes or is withdrawn. The admin role is unchanged by this event.
+#[contractevent(topics = ["admin_transfer_proposed"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdminTransferProposed {
+    /// The current admin who proposed the transfer.
+    #[topic]
+    pub old_admin: Address,
+    /// The proposed successor.
+    pub new_admin: Address,
+    /// Ledger timestamp of the proposal.
+    pub at: u64,
+}
+
+/// Event emitted when the pending admin completes a two-step transfer via
+/// [`Self::accept_admin`], becoming the new admin.
+///
+/// Topics: `("admin_transferred", old_admin)`. Together with
+/// [`AdminTransferProposed`] and [`AdminTransferCancelled`], this makes every
+/// admin-role change observable in the event stream. The stored attestations
+/// are untouched; only the admin role moves.
+#[contractevent(topics = ["admin_transferred"])]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdminTransferred {
+    /// The admin who is being replaced.
+    #[topic]
+    pub old_admin: Address,
+    /// The new admin.
+    pub new_admin: Address,
+    /// Ledger timestamp of the transfer.
+    pub at: u64,
+}
+
 #[contracttype]
 enum DataKey {
     /// Contract admin, the only address permitted to attest.
@@ -446,6 +484,13 @@ impl SafetyRegistry {
         env.storage()
             .instance()
             .set(&DataKey::PendingAdmin, &new_admin);
+
+        AdminTransferProposed {
+            old_admin: admin.clone(),
+            new_admin: new_admin.clone(),
+            at: env.ledger().timestamp(),
+        }
+        .publish(&env);
         extend_instance(&env);
         Ok(())
     }
@@ -463,8 +508,21 @@ impl SafetyRegistry {
             .ok_or(Error::NoPendingAdmin)?;
         pending.require_auth();
 
+        let old_admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+
         env.storage().instance().set(&DataKey::Admin, &pending);
         env.storage().instance().remove(&DataKey::PendingAdmin);
+
+        AdminTransferred {
+            old_admin: old_admin.clone(),
+            new_admin: pending.clone(),
+            at: env.ledger().timestamp(),
+        }
+        .publish(&env);
         extend_instance(&env);
         Ok(())
     }

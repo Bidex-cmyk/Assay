@@ -397,6 +397,14 @@ subscribe by asset without decoding every event body. The topic count is two,
 well within the SDK's four-topic limit, and `Symbol` is the required
 topic-0 shape for a filterable label.
 
+### Event budget impact
+
+Both admin-transfer events carry two addresses and a timestamp. They are
+published once per single (non-batched) admin call, so they do not affect the
+`attest_many` event budget; that cap is measured separately by
+`batch_size_bound_is_measured_and_holds_headroom` and leaves headroom for the
+event schema to grow.
+
 Severity values and mechanic bit positions are **ABI** and mirror
 `internal/mechanics` exactly. Do not renumber them.
 
