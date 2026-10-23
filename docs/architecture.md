@@ -94,27 +94,49 @@ flowchart TD
     CMDASSAY["cmd/assay"] --> API["internal/api"]
     CMDASSAY --> ATTEST["internal/attest"]
     CMDASSAY --> BUNDLE["internal/bundle"]
+    CMDASSAY --> DIFF["internal/differential"]
     CMDASSAY --> HIST["internal/history"]
+    CMDASSAY --> HZ["internal/horizon"]
     CMDASSAY --> MECH["internal/mechanics"]
+    CMDASSAY --> REPLAY["internal/replay"]
     CMDASSAY --> SCAN["internal/scan"]
+    CMDASSAY --> TEMP["internal/temporal"]
+
+    CMDATTESTER["cmd/assay-attester"] --> ATTESTER["internal/attester"]
+    CMDATTESTER --> HZ
+    CMDATTESTER --> MECH
+    CMDATTESTER --> SCAN
 
     CMDATTESTFIXTURE["cmd/attestfixture"] --> ATTEST
     CMDATTESTFIXTURE --> EVAL["internal/eval"]
+    CMDATTESTFIXTURE --> HZ
     CMDATTESTFIXTURE --> MECH
 
-    CMDEVAL["cmd/eval"] --> EVAL["internal/eval"]
+    CMDEVAL["cmd/eval"] --> EVAL
     CMDEVAL --> MECH
 
-    API --> HIST
+    CMDREFRESHFIXTURE["cmd/refreshfixture"] --> FIXTURES["internal/fixtures"]
+
+    API --> HIST["internal/history"]
     API --> HZ["internal/horizon"]
     API --> MECH
-    API --> SCAN
+    API --> SCAN["internal/scan"]
     API --> TEMP["internal/temporal"]
 
     ATTEST --> MECH
+    ATTEST --> VER["internal/version"]
+    ATTESTER --> ATTEST
+    ATTESTER --> EVAL
+    ATTESTER --> HZ
+    ATTESTER --> MECH
+    ATTESTER --> SAC["internal/sac"]
+    ATTESTER --> SCAN
+
     BUNDLE --> ATTEST
     BUNDLE --> MECH
     BUNDLE --> REPLAY["internal/replay"]
+
+    DIFF --> HZ
 
     EVAL --> HZ
     EVAL --> MECH
@@ -122,13 +144,17 @@ flowchart TD
     EVAL --> EXP["internal/stellarexpert"]
     EVAL --> VER["internal/version"]
 
+    EXP --> CACHE["internal/cache"]
+
     HIST --> MECH
     HIST --> TEMP
 
+    MECH --> ASSETLIST["internal/assetlist"]
     MECH --> HZ
     MECH --> SEP1
     MECH --> EXP
 
+    SCAN --> ASSETLIST
     SCAN --> HZ
     SCAN --> MECH
     SCAN --> SEP1
