@@ -58,17 +58,10 @@ ASSETS_LIST="$(cat "$ASSETS_FILE")"
 
 # Track source counts using a simple approach: accumulate raw JSON
 SOURCE_TRACKING="$OUTPUT_DIR/.source-tracking.jsonl"
-> "$SOURCE_TRACKING"
+: > "$SOURCE_TRACKING"
 
 run_num=1
 start_time="$(date -u +%s)"
-
-# If --delay not set, default to 6h = 21600s
-if [ -z "$DELAY" ]; then
-    INTERVAL=21600
-else
-    INTERVAL=$DELAY
-fi
 
 while [ "$run_num" -le "$RUNS" ]; do
     run_start="$(date -u +%s)"
