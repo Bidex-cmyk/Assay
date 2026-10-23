@@ -1,6 +1,10 @@
 BINARY := assay
 PKG := ./...
 
+# `make` with no target prints the target list; every target carries a `##`
+# description that `make help` reads.
+.DEFAULT_GOAL := help
+
 CONTRACTS := assay-contracts
 WASM := $(CONTRACTS)/out/assay_safety_registry.wasm
 
@@ -17,9 +21,9 @@ STELLAR_CLI_VERSION := 27.1.0
 	build-contract deploy-testnet attest read check-stellar-cli-version verify-gate verify-wasm \
 	eval-record eval-compare
 
-all: build
+all: build ## Build the scanner (same as build)
 
-build:
+build: ## Build the scanner into ./assay
 	go build -o $(BINARY) ./cmd/assay
 
 # build-release builds the scanner under the flags that make the binary
@@ -40,16 +44,16 @@ build:
 # .github/workflows/release.yml with `go install ...@<tag>`, which stamps the
 # tag. That split is deliberate: reproducibility of the local build and
 # version binding of a release are separate guarantees.
-build-release:
+build-release: ## Build the scanner reproducibly (trimpath, no VCS stamp, CGO off)
 	CGO_ENABLED=0 go build -trimpath -buildvcs=false -o $(BINARY) ./cmd/assay
 
-test:
+test: ## Run the Go tests with -race and -shuffle=on
 	go test -race -shuffle=on $(PKG)
 
 # test-notify exercises scripts/notify-scheduled-failure.sh against a stubbed
 # gh, covering open/update/comment/close and the "exactly one issue" rule. CI
 # runs it alongside the merge-gate tests.
-test-notify:
+test-notify: ## Test the scheduled-failure notifier against a stubbed gh
 	bash ./scripts/test-notify-scheduled-failure.sh
 
 # test-reproducibility exercises scripts/reproducibility.sh against a stubbed
@@ -57,7 +61,7 @@ test-notify:
 # INCONCLUSIVE outcomes, their exit-code precedence, and the refusal of a
 # table without a valid Preimage column. It needs no network, so CI runs it
 # even though the script it tests does.
-test-reproducibility:
+test-reproducibility: ## Test the reproducibility script offline against fixtures
 	bash ./scripts/test-reproducibility.sh
 
 # test-attest-run exercises scripts/attest-run.sh (the run record `make attest`
@@ -74,7 +78,7 @@ test-stellar-cli-version:
 # vector, every internal/mechanics/testdata subject, and the language-neutral
 # conformance cases. CI runs this as its own job; a deliberate encoding change
 # fails here until the specification and both implementations agree.
-test-preimage:
+test-preimage: ## Cross-check the evidence preimage against the Python encoder
 	go test ./internal/attest/ -run IndependentEncoder -v
 
 # e2e-standalone joins the scanner and the contracts on a local quickstart
@@ -82,38 +86,38 @@ test-preimage:
 # CLI, then get_safety and the example gate are asserted. CI starts the network
 # with stellar/quickstart; locally, run `stellar container start local` first.
 # The script refuses a non-loopback RPC URL and never contacts a public network.
-e2e-standalone:
+e2e-standalone: ## Run the scanner and contracts against a local quickstart network
 	./scripts/e2e-standalone.sh
 
 # cover prints the same per-package table CI puts in the job summary
 # (scripts/coverage-report.sh), lowest coverage first. It reports; it does not
 # gate. The test exit status is preserved so a failing test still fails.
-cover:
+cover: ## Print the per-package coverage table, lowest first
 	@go test -covermode=atomic -coverprofile=coverage.out $(PKG) > coverage.log 2>&1; \
 	rc=$$?; cat coverage.log; echo; \
 	./scripts/coverage-report.sh coverage.log coverage.out; \
 	exit $$rc
 
-fmt:
+fmt: ## Format the Go source with gofmt
 	gofmt -w .
 
-vet:
+vet: ## Run go vet over every package
 	go vet $(PKG)
 
-lint:
+lint: ## Run golangci-lint
 	golangci-lint run
 
-run: build
+run: build ## Build and start the API on :8080
 	./$(BINARY) serve
 
-contract-test:
+contract-test: ## Run the contract tests with cargo test
 	cd $(CONTRACTS) && cargo test
 
-contract-lint:
+contract-lint: ## Check contract formatting and run clippy with warnings denied
 	cd $(CONTRACTS) && cargo fmt --all -- --check
 	cd $(CONTRACTS) && cargo clippy --all-targets -- -D warnings
 
-contract-build:
+contract-build: ## Compile the contracts to wasm without the stellar optimizer
 	cd $(CONTRACTS) && cargo build --release --target wasm32v1-none
 
 # Fail before invoking a CLI version that may produce incompatible output or wasm.
@@ -147,7 +151,7 @@ build-contract: check-stellar-cli-version
 verify-wasm:
 	./scripts/verify-wasm-source.sh $(if $(SOURCE_REF),--source-ref "$(SOURCE_REF)",)
 
-deploy-testnet: build-contract
+deploy-testnet: build-contract ## Deploy the contract to testnet and print the new ID
 	stellar contract deploy --wasm $(WASM) \
 		--source-account $(SOURCE) --network $(NETWORK)
 	@echo
@@ -179,17 +183,17 @@ read: check-stellar-cli-version
 # Runs the merge gate against a commit range, the same script CI runs on every
 # PR. Verify a change offline before opening the PR:
 #   make verify-gate BASE=main HEAD=HEAD
-verify-gate:
+verify-gate: ## Run the merge gate over BASE..HEAD locally
 	@test -n "$(BASE)" || { echo 'usage: make verify-gate BASE=<sha-or-ref> HEAD=<sha-or-ref>'; exit 2; }
 	./scripts/merge-gate.sh "$(BASE)" "$(HEAD)"
 
-test-gate:
+test-gate: ## Test the merge-gate script against fixture commit ranges
 	bash ./scripts/test-merge-gate.sh
 
 # Records the labelled corpus's classification, per subject and per check.
 # Commit the result when the classifier's output is intended to change; it is
 # the baseline eval-compare diffs against.
-eval-record:
+eval-record: ## Record the labelled corpus's classification as the eval baseline
 	go run ./cmd/eval -out docs/eval-baseline.json
 
 # Re-captures one corpus fixture from the URLs recorded in PROVENANCE.md and
@@ -199,7 +203,7 @@ eval-record:
 #
 #   make refresh-fixture SUBJECT=aqua-clear-verified
 #   make refresh-fixture SUBJECT=aqua-clear-verified DRY_RUN=1
-refresh-fixture:
+refresh-fixture: ## Re-capture one corpus fixture and print its diff
 	@test -n "$(SUBJECT)" || { echo 'usage: make refresh-fixture SUBJECT=<fixture-dir>'; exit 2; }
 	go run ./cmd/refreshfixture -subject "$(SUBJECT)" $(if $(DRY_RUN),-dry-run,)
 
@@ -207,7 +211,7 @@ refresh-fixture:
 # what moved: severity, mechanics and evidence separately, with undetermined
 # subjects and corpus membership changes reported on their own. Exits 0 on a
 # movement so it can be read as a report; add STRICT=1 to make movement fail.
-eval-compare:
+eval-compare: ## Compare the classifier against the recorded eval baseline
 	@go run ./cmd/eval -compare docs/eval-baseline.json $(if $(STRICT),-strict,)
 
 # Prints the confusion matrix over the labelled corpus, showing agreements
@@ -215,10 +219,10 @@ eval-compare:
 # its own outcome class. Sample size is printed with every result.
 # Precision and recall require -precision-recall and carry a sample-size
 # caveat.
-eval:
+eval: ## Print the confusion matrix and precision/recall over the corpus
 	@go run ./cmd/eval -confusion -precision-recall
 
-clean:
+clean: ## Remove build, coverage and contract output
 	rm -f $(BINARY) coverage.out coverage.html coverage.log
 	rm -rf $(CONTRACTS)/out
 	cd $(CONTRACTS) && cargo clean
