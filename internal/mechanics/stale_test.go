@@ -10,6 +10,7 @@ import (
 	"github.com/use-assay/assay/internal/attest"
 	"github.com/use-assay/assay/internal/horizon"
 	"github.com/use-assay/assay/internal/mechanics"
+	"github.com/use-assay/assay/internal/stellarexpert"
 )
 
 // These tests cover issue #57: Represent stale state distinctly from unknown and clear.
@@ -30,7 +31,7 @@ func newClearReport(scannedAt time.Time) *mechanics.Report {
 		State:          mechanics.StateValid,
 		Stale:          false,
 		Undetermined:   false,
-		ScannedAt:      scannedAt,
+		ScannedAt:      mechanics.NewCanonicalTime(scannedAt),
 		Findings: []mechanics.Finding{
 			{
 				Check:     "capability",
@@ -238,7 +239,8 @@ func TestStaleEngineRunSetsInitialValidState(t *testing.T) {
 	s := &mechanics.Subject{
 		Asset:           mechanics.Asset{Code: "TEST", Issuer: testIssuer},
 		Stat:            &horizon.AssetStat{AssetCode: "TEST", AssetIssuer: testIssuer},
-		Issuer:          &horizon.Account{AccountID: testIssuer},
+		Issuer:          &horizon.Account{AccountID: testIssuer, HomeDomain: "issuer.example"},
+		Blocked:         &stellarexpert.BlockedDomain{Domain: "issuer.example", Blocked: false},
 		StatFetchedAt:   time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC),
 		IssuerFetchedAt: time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC),
 		ScannedAt:       time.Date(2026, 9, 25, 0, 0, 0, 0, time.UTC),
