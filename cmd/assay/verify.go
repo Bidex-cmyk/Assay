@@ -437,8 +437,8 @@ func runVerify(args []string) error {
 		"also re-read the issuer's flags through Soroban RPC; disagreement fails verification")
 	rpcURL := fs.String("rpc", differential.DefaultURL,
 		"Soroban RPC URL used by -differential")
-	if err := fs.Parse(args); err != nil {
-		return fmt.Errorf("verify: %w", err)
+	if err := parseFlags(fs, args); err != nil {
+		return err
 	}
 	if *bundlePath != "" {
 		if fs.NArg() != 0 {
@@ -465,7 +465,7 @@ func runVerify(args []string) error {
 		return nil
 	}
 	if fs.NArg() != 1 {
-		return fmt.Errorf("verify takes exactly one asset (CODE-ISSUER)")
+		return usagef("verify takes exactly one asset (CODE-ISSUER)")
 	}
 	asset, err := scan.ParseAsset(fs.Arg(0))
 	if err != nil {
