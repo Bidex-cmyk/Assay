@@ -60,6 +60,9 @@ ASSETS_LIST="$(cat "$ASSETS_FILE")"
 SOURCE_TRACKING="$OUTPUT_DIR/.source-tracking.jsonl"
 : > "$SOURCE_TRACKING"
 
+# Seconds between run starts: --delay, or 6h (21600s) by default.
+INTERVAL="${DELAY:-21600}"
+
 run_num=1
 start_time="$(date -u +%s)"
 
@@ -115,9 +118,9 @@ print(json.dumps({
     run_elapsed=$((run_end - run_start))
     echo "Run $run_num/$RUNS completed in ${run_elapsed}s" >&2
 
-    # Calculate when the next run should start (6h after this one started)
+    # Calculate when the next run should start (INTERVAL after this one started)
     if [ "$run_num" -lt "$RUNS" ]; then
-        desired_next="$((run_start + 21600))"
+        desired_next="$((run_start + INTERVAL))"
         now="$(date -u +%s)"
         sleep_time=$((desired_next - now))
         if [ "$sleep_time" -gt 0 ]; then
