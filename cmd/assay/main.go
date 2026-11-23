@@ -604,48 +604,43 @@ func history(rep *mechanics.Report) []historyEntry {
 		return nil
 	}
 	hist := make([]historyEntry, 0, len(rep.Evidence))
-	for _, e := range rep.Evidence {
-		hist = append(hist, historyEntry{
-			Asset:      rep.Asset.String(),
-			Severity:   rep.Severity.String(),
-			Transition: transition(e.Claim),
-			Reason:     e.Claim,
-			Time:       e.RetrievedAt.Time(),
-		})
+	for _, finding := range rep.Findings {
+		for _, e := range finding.Evidence {
+			hist = append(hist, historyEntry{
+				Asset:      rep.Asset.String(),
+				Severity:   rep.Severity.String(),
+				Transition: transition(finding, e),
+				Reason:     e.Claim,
+				Time:       e.RetrievedAt.Time(),
+			})
+		}
 	}
 	return hist
 }
 
-// transition reduces a plain-language evidence claim to the term the
-// consumer prints: whatever the issuer was observed doing, or unknown when a
-// source did not answer.
-func transition(claim string) string {
-	if claim == "" {
-		return "unknown"
+// transition classifies an observation from the check and source that
+// produced it. Claim text may contain issuer-controlled values, so it is
+// preserved as the reason but never used to choose the transition.
+func transition(finding mechanics.Finding, evidence mechanics.Evidence) string {
+	if evidence.Attempted {
+		return "not retrievable"
 	}
-	low := strings.ToLower(claim)
-	for _, s := range candidateTransitions {
-		if strings.Contains(low, s) {
-			return s
+	if finding.Check == "reputation" {
+		switch evidence.Source {
+		case "stellar.expert/directory":
+			switch evidence.Outcome {
+			case mechanics.EvidenceOutcomeMalicious:
+				return "malicious"
+			case mechanics.EvidenceOutcomeListed:
+				return "listed as"
+			}
+		case "stellar.expert/blocked-domains":
+			if evidence.Outcome == mechanics.EvidenceOutcomeBlocked {
+				return "blocked"
+			}
 		}
 	}
 	return "unknown"
-}
-
-// candidateTransitions is the set of ways an observation can read in this
-// project. It is deliberately small: the history view does not re-derive the
-// verdict, it only reports what each observation says.
-var candidateTransitions = []string{
-	"malicious",
-	"listed as",
-	"blocked",
-	"unverified",
-	"not retrievable",
-	"not present",
-	"credits",
-	"claims",
-	"borrow",
-	"pay",
 }
 
 type historyEntry struct {

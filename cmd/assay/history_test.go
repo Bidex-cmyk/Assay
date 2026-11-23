@@ -19,18 +19,25 @@ func TestHistoryJSON(t *testing.T) {
 	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	rep := &mechanics.Report{
 		Asset: mechanics.Asset{Code: "AQUA", Issuer: "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"},
-		Evidence: []mechanics.Evidence{
+		Findings: []mechanics.Finding{
 			{
-				Source:      "horizon",
-				URL:         "https://horizon.stellar.org/assets?asset_code=AQUA&asset_issuer=GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
-				Claim:       "issuer flags: auth_required=false auth_revocable=false auth_immutable=false auth_clawback_enabled=false",
-				RetrievedAt: mechanics.NewCanonicalTime(now),
+				Check: "capability",
+				Evidence: []mechanics.Evidence{{
+					Source:      "horizon",
+					URL:         "https://horizon.stellar.org/assets?asset_code=AQUA&asset_issuer=GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
+					Claim:       "issuer flags: auth_required=false auth_revocable=false auth_immutable=false auth_clawback_enabled=false",
+					RetrievedAt: mechanics.NewCanonicalTime(now),
+				}},
 			},
 			{
-				Source:      "stellar.expert/directory",
-				URL:         "https://api.stellar.expert/explorer/directory/GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
-				Claim:       "listed as \"Zeam.Money\" (domain \"zeam.money\", tags: )",
-				RetrievedAt: mechanics.NewCanonicalTime(now.Add(1 * time.Hour)),
+				Check: "reputation",
+				Evidence: []mechanics.Evidence{{
+					Source:      "stellar.expert/directory",
+					URL:         "https://api.stellar.expert/explorer/directory/GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
+					Claim:       "listed as \"Zeam.Money\" (domain \"zeam.money\", tags: )",
+					Outcome:     mechanics.EvidenceOutcomeListed,
+					RetrievedAt: mechanics.NewCanonicalTime(now.Add(1 * time.Hour)),
+				}},
 			},
 		},
 	}
@@ -80,14 +87,15 @@ func TestHistoryRaw(t *testing.T) {
 	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
 	rep := &mechanics.Report{
 		Asset: mechanics.Asset{Code: "AQUA", Issuer: "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"},
-		Evidence: []mechanics.Evidence{
-			{
+		Findings: []mechanics.Finding{{
+			Check: "capability",
+			Evidence: []mechanics.Evidence{{
 				Source:      "horizon",
 				URL:         "https://horizon.stellar.org/assets?asset_code=AQUA&asset_issuer=GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
 				Claim:       "issuer flags: auth_required=false auth_revocable=false auth_immutable=false auth_clawback_enabled=false",
 				RetrievedAt: mechanics.NewCanonicalTime(now),
-			},
-		},
+			}},
+		}},
 	}
 
 	got := history(rep)
@@ -103,22 +111,23 @@ func TestHistoryRaw(t *testing.T) {
 
 func TestTransition(t *testing.T) {
 	cases := []struct {
-		claim    string
+		finding  mechanics.Finding
+		evidence mechanics.Evidence
 		expected string
 	}{
-		{"issuer flags: auth_required=false auth_revocable=false auth_immutable=false auth_clawback_enabled=false", "unknown"},
-		{"listed as \"Zeam.Money\" (domain \"zeam.money\", tags: )", "listed as"},
-		{"domain unverified", "unverified"},
-		{"not retrievable: status 429", "not retrievable"},
-		{"domain blocked", "blocked"},
-		{"malicious listing found", "malicious"},
-		{"", "unknown"},
-		{"something completely different", "unknown"},
+		{mechanics.Finding{Check: "reputation"}, mechanics.Evidence{Source: "stellar.expert/blocked-domains", Claim: `domain "blocked.example" blocked=false`}, "unknown"},
+		{mechanics.Finding{Check: "reputation"}, mechanics.Evidence{Source: "stellar.expert/blocked-domains", Claim: `domain "blocked.example" blocked=true`, Outcome: mechanics.EvidenceOutcomeBlocked}, "blocked"},
+		{mechanics.Finding{Check: "sep1-domain"}, mechanics.Evidence{Source: "horizon", Claim: `home_domain "payments.example"`}, "unknown"},
+		{mechanics.Finding{Check: "sep1-domain"}, mechanics.Evidence{Source: "stellar.toml", Claim: "not retrievable: status 429", Attempted: true}, "not retrievable"},
+		{mechanics.Finding{Check: "reputation"}, mechanics.Evidence{Source: "stellar.expert/directory", Claim: `listed as "Zeam.Money"`, Outcome: mechanics.EvidenceOutcomeListed}, "listed as"},
+		{mechanics.Finding{Check: "reputation"}, mechanics.Evidence{Source: "stellar.expert/directory", Claim: "malicious listing found", Outcome: mechanics.EvidenceOutcomeMalicious}, "malicious"},
+		{mechanics.Finding{Check: "reputation"}, mechanics.Evidence{Source: "stellar.expert/blocked-domains", Claim: `domain "blocked.example" blocked=true`}, "unknown"},
+		{mechanics.Finding{Check: "capability"}, mechanics.Evidence{Source: "stellar.expert/directory", Claim: "listed as malicious"}, "unknown"},
 	}
 
 	for _, tc := range cases {
-		if got := transition(tc.claim); got != tc.expected {
-			t.Errorf("transition(%q) = %q, want %q", tc.claim, got, tc.expected)
+		if got := transition(tc.finding, tc.evidence); got != tc.expected {
+			t.Errorf("transition(%+v, %+v) = %q, want %q", tc.finding, tc.evidence, got, tc.expected)
 		}
 	}
 }

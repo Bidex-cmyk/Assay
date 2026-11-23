@@ -268,8 +268,10 @@ whether it was ever different.
 
 Each entry carries the asset, the report's severity at scan time, the
 **transition** — what the issuer was observed doing, reduced to a term
-(`malicious`, `listed as`, `blocked`, `unverified`, `not retrievable`, …) — the
-observation's reason verbatim, and the time it was retrieved.
+(`malicious`, `listed as`, `blocked`, or `not retrievable`) — the observation's
+reason verbatim, and the time it was retrieved. These labels come from the
+check, evidence source, fetch status, and structured outcome. Claim text is
+shown as the reason only; it does not determine the label.
 
 An observation that does not reduce to a known transition prints as
 `unknown`. The history view deliberately does not re-derive the verdict; it
@@ -291,7 +293,7 @@ Semantics:
 - **valid state** — the observations print in time order.
 - **missing state** — a clear message (`no observations for ASSET`), and exit
   0 unless `-guarantee` was given.
-- **unknown state** — an observation whose claim matches no known transition
+- **unknown state** — an observation without a recognized structured outcome
   prints with transition `unknown` rather than being dropped.
 
 ## assay verify-preimage

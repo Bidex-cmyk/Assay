@@ -195,21 +195,24 @@ func (c ReputationCheck) Run(_ context.Context, s *Subject) (Finding, error) {
 
 	if s.Directory != nil {
 		tags := strings.Join(s.Directory.Tags, ", ")
+		outcome := EvidenceOutcomeListed
+		// Escalation is driven by the named, documented adverse set rather than
+		// an inline literal, so the vocabulary is a reviewed artifact.
+		for _, tag := range AdverseDirectoryTags {
+			if s.Directory.HasTag(tag) {
+				outcome = EvidenceOutcomeMalicious
+				flagged = append(flagged, fmt.Sprintf("the curated directory tags the issuer %q", tag))
+				break
+			}
+		}
 		f.Evidence = append(f.Evidence, Evidence{
 			Source: "stellar.expert/directory",
 			URL:    s.DirectoryURL,
 			Claim: fmt.Sprintf("listed as %q (domain %q, tags: %s)",
 				s.Directory.Name, s.Directory.Domain, tags),
+			Outcome:     outcome,
 			RetrievedAt: NewCanonicalTime(s.DirectoryFetchedAt),
 		})
-		// Escalation is driven by the named, documented adverse set rather than
-		// an inline literal, so the vocabulary is a reviewed artifact.
-		for _, tag := range AdverseDirectoryTags {
-			if s.Directory.HasTag(tag) {
-				flagged = append(flagged, fmt.Sprintf("the curated directory tags the issuer %q", tag))
-				break
-			}
-		}
 		// A tag outside the documented vocabulary is not silently dropped. An
 		// unrecognised tag could be adverse, and ignoring it would be a false
 		// negative that never announces itself, on the only axis that can raise
@@ -235,10 +238,15 @@ func (c ReputationCheck) Run(_ context.Context, s *Subject) (Finding, error) {
 
 	blocklistHit := s.Blocked != nil && s.Blocked.Blocked
 	if s.Blocked != nil {
+		var outcome EvidenceOutcome
+		if blocklistHit {
+			outcome = EvidenceOutcomeBlocked
+		}
 		f.Evidence = append(f.Evidence, Evidence{
 			Source:      "stellar.expert/blocked-domains",
 			URL:         s.BlockedURL,
 			Claim:       fmt.Sprintf("domain %q blocked=%t", s.Blocked.Domain, s.Blocked.Blocked),
+			Outcome:     outcome,
 			RetrievedAt: NewCanonicalTime(s.BlockedFetchedAt),
 		})
 		if blocklistHit {

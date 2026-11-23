@@ -100,6 +100,9 @@ func TestReputationBlocklistHitOnVerifiedDomainEscalates(t *testing.T) {
 	if f.Severity != mechanics.Critical || !f.Escalation || f.Mechanics&mechanics.MechBlocklisted == 0 {
 		t.Fatalf("reputation finding = %+v, want an escalation carrying the blocklisted bit", f)
 	}
+	if got := evidenceOutcome(f, "stellar.expert/blocked-domains"); got != mechanics.EvidenceOutcomeBlocked {
+		t.Errorf("blocklist evidence outcome = %q, want %q", got, mechanics.EvidenceOutcomeBlocked)
+	}
 	if strings.Contains(f.Reasoning, "not verified") {
 		t.Errorf("a verified domain carried the unverified caveat:\n%s", f.Reasoning)
 	}
@@ -221,12 +224,31 @@ func TestReputationDirectoryAndBlocklistDisagree(t *testing.T) {
 		t.Errorf("the blocklist answered blocked=false but is reported as unread:\n%s", f.Reasoning)
 	}
 	var sawBlockedFalse bool
+	var sawMaliciousDirectory bool
 	for _, e := range f.Evidence {
 		if e.Source == "stellar.expert/blocked-domains" && strings.Contains(e.Claim, "blocked=false") {
 			sawBlockedFalse = true
+			if e.Outcome != "" {
+				t.Errorf("blocked=false evidence outcome = %q, want empty", e.Outcome)
+			}
+		}
+		if e.Source == "stellar.expert/directory" {
+			sawMaliciousDirectory = e.Outcome == mechanics.EvidenceOutcomeMalicious
 		}
 	}
 	if !sawBlockedFalse {
 		t.Error("the blocklist's negative answer is not recorded as evidence")
 	}
+	if !sawMaliciousDirectory {
+		t.Error("malicious directory evidence has no malicious outcome")
+	}
+}
+
+func evidenceOutcome(f mechanics.Finding, source string) mechanics.EvidenceOutcome {
+	for _, e := range f.Evidence {
+		if e.Source == source {
+			return e.Outcome
+		}
+	}
+	return ""
 }

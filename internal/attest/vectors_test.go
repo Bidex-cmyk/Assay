@@ -308,6 +308,28 @@ func TestPreimageVectors(t *testing.T) {
 	}
 }
 
+func TestEvidenceOutcomeDoesNotChangePreimage(t *testing.T) {
+	rep := vectorReports["sorted-multi-evidence"]()
+	before, err := attest.FromReport(rep)
+	if err != nil {
+		t.Fatalf("FromReport before outcome: %v", err)
+	}
+	if len(rep.Evidence) == 0 {
+		t.Fatal("sorted-multi-evidence has no evidence")
+	}
+	rep.Evidence[0].Outcome = mechanics.EvidenceOutcomeBlocked
+	after, err := attest.FromReport(rep)
+	if err != nil {
+		t.Fatalf("FromReport after outcome: %v", err)
+	}
+	if after.Preimage != before.Preimage {
+		t.Errorf("Outcome changed preimage\n before: %q\n after:  %q", before.Preimage, after.Preimage)
+	}
+	if after.EvidenceHash != before.EvidenceHash {
+		t.Errorf("Outcome changed evidence_hash: before %s, after %s", before.EvidenceHash, after.EvidenceHash)
+	}
+}
+
 // onchainDigests are the full evidence_hashes actually recorded on testnet,
 // transcribed from docs/attestation-run.md. They are the external anchor the
 // vectors cannot rewrite: a vector regenerated to match whatever the encoder

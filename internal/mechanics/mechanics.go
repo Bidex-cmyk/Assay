@@ -119,6 +119,10 @@ type Evidence struct {
 	// reproducing. A future encoding may bind it; that would be a version bump.
 	RequestedURL string `json:"requested_url,omitempty"`
 	Claim        string `json:"claim"`
+	// Outcome is a machine-readable result used by consumers such as the
+	// history view. It is deliberately outside the evidence_hash preimage,
+	// which encodes only Source, URL and Claim.
+	Outcome EvidenceOutcome `json:"-"`
 	// RetrievedAt is when this specific fact was observed from the source (or
 	// when the attempt was made, if the fetch failed).
 	//
@@ -157,6 +161,16 @@ type Evidence struct {
 	// LedgerSequence is an alias for LatestLedger.
 	LedgerSequence int64 `json:"ledger_sequence,omitempty"`
 }
+
+// EvidenceOutcome classifies a result that must not be reconstructed from
+// claim text, which can contain issuer-controlled values.
+type EvidenceOutcome string
+
+const (
+	EvidenceOutcomeListed    EvidenceOutcome = "listed"
+	EvidenceOutcomeMalicious EvidenceOutcome = "malicious"
+	EvidenceOutcomeBlocked   EvidenceOutcome = "blocked"
+)
 
 // UnmarshalJSON decodes an Evidence object, ensuring LatestLedger and
 // LedgerSequence remain synchronized if either was emitted in JSON.
