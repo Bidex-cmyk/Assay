@@ -6,6 +6,7 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -215,7 +216,11 @@ func (w *apiErrorWriter) Write(p []byte) (int, error) {
 	if w.rewrite {
 		return len(p), nil
 	}
-	return w.ResponseWriter.Write(p)
+	n, err := w.ResponseWriter.Write(p)
+	if err != nil {
+		return n, fmt.Errorf("api: write response: %w", err)
+	}
+	return n, nil
 }
 
 // Flush keeps the SSE handler's http.Flusher assertion working through the
