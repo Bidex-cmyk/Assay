@@ -133,6 +133,10 @@ pub enum Error {
     InvalidAmount = 6,
     /// Deposited balance would overflow.
     BalanceOverflow = 7,
+    /// The stored attestation is internally inconsistent: the clawback
+    /// capability is set below `SEVERITY_HIGH`. The registry refuses to write
+    /// this, but a gate must not depend on the writer having been correct.
+    Inconsistent = 8,
 }
 
 #[contract]
@@ -279,9 +283,10 @@ impl ExampleGate {
         // first, then the severity ceiling — without which an asset that is
         // critical purely by reputation passes the mask and is admitted (see
         // DOGE in the module docs and docs/integrating.md) — then the
-        // refused-mechanics mask. Mapping the violation back to this
-        // contract's error keeps every refusal path exactly where a caller
-        // already knows to look.
+        // confiscation invariant, which re-checks the stored attestation
+        // rather than trusting the writer, then the refused-mechanics mask.
+        // Mapping the violation back to this contract's error keeps every
+        // refusal path exactly where a caller already knows to look.
         check_policy(
             &safety,
             env.ledger().timestamp(),
@@ -292,6 +297,7 @@ impl ExampleGate {
         .map_err(|violation| match violation {
             PolicyViolation::AttestationStale => Error::AttestationStale,
             PolicyViolation::SeverityTooHigh => Error::SeverityTooHigh,
+            PolicyViolation::Inconsistent => Error::Inconsistent,
             PolicyViolation::IssuerCanTakeIt => Error::IssuerCanTakeIt,
         })
     }
