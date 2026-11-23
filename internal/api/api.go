@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -146,7 +147,83 @@ func (s *Server) Handler() http.Handler {
 		}
 		mux.HandleFunc(route, handler)
 	}
-	return s.withObservability(s.withCORS(mux))
+	allowed := make(map[string]string, len(Routes))
+	for _, route := range Routes {
+		if method, path, ok := strings.Cut(route, " "); ok {
+			allowed[path] = method
+		}
+	}
+	return s.withObservability(s.withCORS(s.withAPIErrors(mux, allowed)))
+}
+
+// withAPIErrors rewrites the plain-text 404 and 405 answers the router and the
+// UI fallback produce for /api/ paths into the JSON errorBody the rest of the
+// API uses. A typo in a path, or the wrong method on a real one, reaches no
+// handler, so without this pass an API client gets text/plain. Non-API paths
+// are passed through untouched, keeping the UI's own 404 as it was.
+func (s *Server) withAPIErrors(next http.Handler, allowed map[string]string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/api/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		ew := &apiErrorWriter{ResponseWriter: w}
+		next.ServeHTTP(ew, r)
+		if !ew.rewrite {
+			return
+		}
+		if ew.status == http.StatusMethodNotAllowed {
+			// The router advertises HEAD alongside GET because a GET pattern
+			// serves it implicitly. The API documents GET, so name that.
+			allow := allowed[r.URL.Path]
+			if allow == "" {
+				allow = w.Header().Get("Allow")
+			}
+			w.Header().Set("Allow", allow)
+			writeJSON(w, ew.status, apiErr(codeMethodNotAllowed, "method "+r.Method+" not allowed; allowed: "+allow))
+			return
+		}
+		writeJSON(w, ew.status, apiErr(codeNotFound, "unknown API path: "+r.URL.Path))
+	})
+}
+
+// apiErrorWriter decides, at WriteHeader time, whether the response is one the
+// router generated that should be rewritten. Rewriting depends on the body not
+// already being JSON: handler errors (asset_not_found, account_not_found) set
+// their JSON content type first and are left alone.
+type apiErrorWriter struct {
+	http.ResponseWriter
+	rewrite bool
+	status  int
+}
+
+func (w *apiErrorWriter) WriteHeader(status int) {
+	if w.rewrite {
+		return
+	}
+	if status == http.StatusNotFound || status == http.StatusMethodNotAllowed {
+		if !strings.HasPrefix(w.Header().Get("Content-Type"), "application/json") {
+			w.rewrite = true
+			w.status = status
+			return
+		}
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *apiErrorWriter) Write(p []byte) (int, error) {
+	if w.rewrite {
+		return len(p), nil
+	}
+	return w.ResponseWriter.Write(p)
+}
+
+// Flush keeps the SSE handler's http.Flusher assertion working through the
+// wrapper; without it the events endpoint would answer 500.
+func (w *apiErrorWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
@@ -166,14 +243,16 @@ func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
 // Error codes. These are the stable identifiers API consumers should branch on;
 // the human-readable error message may change, the code will not.
 const (
-	codeAssetNotFound   = "asset_not_found"
-	codeAccountNotFound = "account_not_found"
-	codeInvalidAsset    = "invalid_asset"
-	codeInvalidHolder   = "invalid_holder"
-	codeInvalidParam    = "invalid_param"
-	codeMissingParam    = "missing_param"
-	codeUpstreamUnavail = "upstream_unavailable"
-	codeRateLimited     = "rate_limited"
+	codeNotFound         = "not_found"
+	codeMethodNotAllowed = "method_not_allowed"
+	codeAssetNotFound    = "asset_not_found"
+	codeAccountNotFound  = "account_not_found"
+	codeInvalidAsset     = "invalid_asset"
+	codeInvalidHolder    = "invalid_holder"
+	codeInvalidParam     = "invalid_param"
+	codeMissingParam     = "missing_param"
+	codeUpstreamUnavail  = "upstream_unavailable"
+	codeRateLimited      = "rate_limited"
 )
 
 type errorBody struct {

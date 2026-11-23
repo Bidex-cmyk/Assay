@@ -59,11 +59,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
         '404':
-          description: Asset not found on the ledger.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
         '502':
           description: Upstream scan failure.
           content:
@@ -121,6 +119,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
   /api/v1/events:
     get:
       summary: Server-sent events stream for capability, severity, and accountability transitions
@@ -143,6 +143,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
         '429':
           description: Too many concurrent SSE connections. Retry-After header gives seconds to wait.
           content:
@@ -201,11 +203,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
         '404':
-          description: Account not found on the ledger.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
         '429':
           description: Rate limited. Retry-After header gives seconds to wait.
           content:
@@ -271,6 +271,30 @@ paths:
               schema:
                 type: string
 components:
+  responses:
+    NotFound:
+      description: >-
+        The requested API path or resource does not exist. Unknown /api/ paths
+        carry this shape, so a client decodes a 404 the same way as any other
+        API error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    MethodNotAllowed:
+      description: >-
+        The path exists but does not accept this HTTP method. The Allow header
+        names the methods it does accept.
+      headers:
+        Allow:
+          description: The methods the path accepts.
+          schema:
+            type: string
+          example: GET
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
   schemas:
     Error:
       type: object
@@ -285,6 +309,8 @@ components:
             Stable machine-readable identifier for the error type.
             Consumers should branch on this field, not on the error message.
           enum:
+            - not_found
+            - method_not_allowed
             - missing_param
             - invalid_asset
             - invalid_holder
