@@ -192,6 +192,19 @@ before picking a value — the short version is that a day is defensible for a
 custodial deposit gate, a fresh scan beats a cached attestation for one-shot
 settlements, and no window survives without a re-attestation path behind it.
 
+#### Zero has two explicit meanings
+
+The registry read methods use `max_age_secs = 0` to disable freshness checks.
+`assay_gate::check_policy` treats zero as a zero-second window, so only an
+attestation whose computed age is zero passes. Normally that means an
+attestation from the current ledger second; a future timestamp also has age
+zero because the helper uses `saturating_sub`. This difference is intentional:
+the registry preserves its deployed behavior, while the helper fails closed
+when an integrator supplies zero. Do not copy `0` between these APIs expecting
+the same policy; choose and pass the intended freshness window explicitly. The
+decision and rationale are recorded in
+[`contract-interface.md`](contract-interface.md#staleness-is-the-callers-policy).
+
 Then call it before you act, in the same transaction:
 
 ```rust

@@ -577,6 +577,17 @@ have very different tolerances. `max_age_secs = 0` opts out explicitly.
 (see [timestamps.md](timestamps.md)); recommended bands with reasoning, the
 re-attestation cadence, and consumer guidance are in [freshness.md](freshness.md).
 
+The policy helper [`assay_gate::check_policy`](integrating.md#2-decide-what-you-are-refusing)
+deliberately gives zero a stricter meaning: `max_age_secs = 0` there allows
+only an attestation whose computed age is zero. Normally that means an
+attestation from the current ledger second; a future timestamp also has age
+zero because the helper uses `saturating_sub`. Keep this split. The registry's
+zero-age opt-out is already part of the deployed interface, and changing it to
+reject zero would change on-chain behavior and require an interface-version
+bump. The helper remains fail-closed for integrators who pass a zero-initialized
+or otherwise missing freshness setting. Do not reuse zero between the
+registry and `check_policy` expecting the same policy.
+
 [freshness.md](freshness.md) is the guidance for picking a value: what changes
 under an attestation, how fast (measured, not guessed), and defensible windows
 per use class.

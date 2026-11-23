@@ -176,11 +176,13 @@ pub enum PolicyViolation {
 /// staleness is measured with `saturating_sub` so a ledger timestamp earlier
 /// than `attested_at` reads as fresh rather than wrapping.
 ///
-/// Note that `max_age_secs == 0` does NOT disable the freshness check here,
-/// even though it does in the registry's own `is_safe`: a gate that trusted
-/// an attestation of any age because someone constructed it with `0` would
-/// fail open. With `0`, only an attestation from the current ledger second
-/// passes.
+/// Deliberate difference: `max_age_secs == 0` is a zero-second window here,
+/// so only an attestation whose computed age is zero passes. Normally this is
+/// an attestation from the current ledger second; a future timestamp also has
+/// age zero because age uses `saturating_sub`. The registry uses zero to
+/// disable freshness checks for compatibility with its deployed interface.
+/// Do not pass zero between these APIs expecting the same policy; see
+/// `docs/contract-interface.md` for the decision and rationale.
 pub fn check_policy(
     safety: &Safety,
     now: u64,
@@ -277,10 +279,11 @@ mod test {
         );
     }
 
-    // A zero freshness window fails closed, unlike the registry's is_safe:
-    // only an attestation from the current ledger second passes.
+    // Zero is a zero-second window for this helper: the current ledger second
+    // passes, while an older attestation is rejected. The registry's APIs
+    // intentionally use zero to disable freshness; both meanings are pinned.
     #[test]
-    fn zero_max_age_refuses_an_older_attestation() {
+    fn zero_max_age_is_a_zero_second_window() {
         let fresh = attestation(0, 0, NOW);
         assert_eq!(check_policy(&fresh, NOW, MAX_SEVERITY, 0, REFUSED), Ok(()));
         let older = attestation(0, 0, NOW - 1);

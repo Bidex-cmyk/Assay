@@ -104,6 +104,29 @@ fn stale_attestation_fails_closed() {
     assert!(client.is_safe(&asset, &SEVERITY_MEDIUM, &0));
 }
 
+/// The registry's deployed contract uses zero to opt out of freshness checks
+/// on every read gate. `assay_gate::check_policy` intentionally uses a strict
+/// zero-second window instead; the cross-API difference is documented in
+/// `docs/contract-interface.md`.
+#[test]
+fn zero_max_age_disables_freshness_across_registry_gates() {
+    let (env, client, admin) = setup();
+    let asset = Address::generate(&env);
+
+    env.ledger().set_timestamp(1_000);
+    client.attest(&asset, &SEVERITY_CLEAR, &0, &hash(&env));
+    env.ledger().set_timestamp(1_601);
+
+    assert!(client.is_safe(&asset, &SEVERITY_CLEAR, &0));
+    assert!(client.is_safe_masked(&asset, &0, &0));
+
+    match client.quorum(&asset, &vec![&env, admin.clone()], &1, &0) {
+        Quorum::Met(safety) => assert_eq!(safety.attested_at, 1_000),
+        other => panic!("expected stale attestation to count at zero age, got {other:?}"),
+    }
+    assert!(client.is_safe_quorum(&asset, &vec![&env, admin], &1, &SEVERITY_CLEAR, &0,));
+}
+
 #[test]
 fn attestation_from_the_future_does_not_underflow() {
     let (env, client, _) = setup();
