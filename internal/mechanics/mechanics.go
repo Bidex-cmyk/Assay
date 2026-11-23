@@ -166,6 +166,7 @@ type Evidence struct {
 // claim text, which can contain issuer-controlled values.
 type EvidenceOutcome string
 
+// EvidenceOutcome values classify structured evidence results for consumers.
 const (
 	EvidenceOutcomeListed    EvidenceOutcome = "listed"
 	EvidenceOutcomeMalicious EvidenceOutcome = "malicious"
