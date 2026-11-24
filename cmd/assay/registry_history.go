@@ -8,15 +8,15 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
+	"github.com/use-assay/assay/internal/registry"
+	"github.com/use-assay/assay/internal/sac"
 	"github.com/use-assay/assay/internal/scan"
 )
 
@@ -34,8 +34,6 @@ import (
 // that gap is never silent.
 
 const (
-	defaultRegistry = "CBK4FBIHMDTXCUPE4E3ZDVSFJSCY5FJETTKNIQPN4LFJIKKIBLKIXQ73"
-	defaultRPC      = "https://soroban-testnet.stellar.org"
 	eventsPageLimit = 200
 )
 
@@ -284,7 +282,7 @@ func scAddressContract(strkey string) (string, error) {
 	if err != nil || len(raw) != 35 || raw[0] != 2<<3 {
 		return "", fmt.Errorf("invalid contract address %q", strkey)
 	}
-	if crc16(raw[:33]) != binary.LittleEndian.Uint16(raw[33:]) {
+	if sac.CRC16(raw[:33]) != binary.LittleEndian.Uint16(raw[33:]) {
 		return "", fmt.Errorf("invalid contract address %q: bad checksum", strkey)
 	}
 	buf := make([]byte, 0, 40)
@@ -294,37 +292,11 @@ func scAddressContract(strkey string) (string, error) {
 	return base64.StdEncoding.EncodeToString(buf), nil
 }
 
-// crc16 is CRC16-XMODEM, the checksum Stellar strkeys carry.
-func crc16(data []byte) uint16 {
-	var crc uint16
-	for _, b := range data {
-		crc ^= uint16(b) << 8
-		for i := 0; i < 8; i++ {
-			if crc&0x8000 != 0 {
-				crc = crc<<1 ^ 0x1021
-			} else {
-				crc <<= 1
-			}
-		}
-	}
-	return crc
-}
-
-// stellarSACID derives an asset's SAC address through the stellar CLI, as
-// `assay verify` does. It is a variable so tests do not need the CLI.
-var stellarSACID = func(code, issuer, network string) (string, error) {
-	out, err := exec.Command("stellar", "contract", "id", "asset",
-		"--asset", code+":"+issuer, "--network", network).Output()
-	if err != nil {
-		return "", fmt.Errorf("derive SAC id: %w", err)
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
 func runRegistryHistory(args []string, d commandDeps) error {
-	fs := flag.NewFlagSet("registry-history", flag.ContinueOnError)
-	rpcURL := fs.String("rpc", envOr("ASSAY_RPC_URL", defaultRPC), "Soroban RPC endpoint (env ASSAY_RPC_URL)")
-	registry := fs.String("contract", envOr("ASSAY_CONTRACT_ID", defaultRegistry), "registry contract id (env ASSAY_CONTRACT_ID)")
+	fs := newFlagSet("registry-history")
+	registryRPC := fs.String("registry-rpc", envOr("ASSAY_RPC_URL", registry.DefaultRPCURL), "Soroban RPC endpoint for the registry (env ASSAY_RPC_URL)")
+	rpcURL := fs.String("rpc", "", "alias for -registry-rpc")
+	contract := fs.String("contract", envOr("ASSAY_CONTRACT_ID", registry.DefaultContractID), "registry contract id (env ASSAY_CONTRACT_ID)")
 	network := fs.String("network", envOr("ASSAY_NETWORK", "testnet"), "network used to derive the SAC id (env ASSAY_NETWORK)")
 	asJSON := fs.Bool("json", false, "print the history as JSON")
 	if err := parseFlags(fs, args); err != nil {
@@ -334,20 +306,25 @@ func runRegistryHistory(args []string, d commandDeps) error {
 		return usagef("registry-history takes exactly one asset (CODE-ISSUER or a C... SAC address)")
 	}
 
-	sac := fs.Arg(0)
-	if !strings.HasPrefix(sac, "C") || strings.Contains(sac, "-") {
-		asset, err := scan.ParseAsset(sac)
+	effectiveRPC := *registryRPC
+	if *rpcURL != "" {
+		effectiveRPC = *rpcURL
+	}
+
+	sacAddr := fs.Arg(0)
+	if !strings.HasPrefix(sacAddr, "C") || strings.Contains(sacAddr, "-") {
+		asset, err := scan.ParseAsset(sacAddr)
 		if err != nil {
 			return fmt.Errorf("registry-history: %w", err)
 		}
-		if sac, err = stellarSACID(asset.Code, asset.Issuer, *network); err != nil {
-			return err
+		if sacAddr, err = sac.Address(asset.Code, asset.Issuer, sac.Passphrase(*network)); err != nil {
+			return fmt.Errorf("registry-history: %w", err)
 		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	h, err := fetchRegistryHistory(ctx, &http.Client{Timeout: 30 * time.Second}, *rpcURL, *registry, sac)
+	h, err := fetchRegistryHistory(ctx, &http.Client{Timeout: 30 * time.Second}, effectiveRPC, *contract, sacAddr)
 	if err != nil {
 		return err
 	}

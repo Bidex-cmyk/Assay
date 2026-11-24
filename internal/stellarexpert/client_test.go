@@ -48,6 +48,14 @@ func TestUserAgent(t *testing.T) {
 	}
 }
 
+func TestNewEnvURL(t *testing.T) {
+	t.Setenv("ASSAY_STELLAREXPERT_URL", "http://127.0.0.1:9999")
+	c := stellarexpert.New("")
+	if c.BaseURL != "http://127.0.0.1:9999" {
+		t.Errorf("New(\"\") with ASSAY_STELLAREXPERT_URL = %q, want http://127.0.0.1:9999", c.BaseURL)
+	}
+}
+
 func serve(t *testing.T, status int, body string) *stellarexpert.Client {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

@@ -14,6 +14,7 @@ nowhere to put one.
 type Check interface {
     ID() string
     Describe() string
+    Inputs() []string // Subject fields the check reads
     Run(ctx context.Context, s *Subject) (Finding, error)
 }
 ```
@@ -81,6 +82,13 @@ not a live capture, because no disagreeing asset has ever been observed.
 **Cannot conclude:** whether the issuer will ever use the power; whether an
 existing holder is exposed (clawback is inherited at trustline creation, so this
 answers the prospective question only); or anything about who the issuer is.
+
+If either Horizon copy reports `auth_clawback_enabled=true` without
+`auth_revocable=true`, the combination is impossible under
+[CAP-0035](https://github.com/stellar/stellar-protocol/blob/master/core/cap-0035.md).
+It is treated as a broken, lagging, or hostile source fault rather than scored:
+the capability finding is undetermined, its reasoning names the bad copy, and
+the asset and issuer-account URLs are both cited.
 
 ## `mutability`
 

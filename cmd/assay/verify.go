@@ -4,11 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
 
@@ -18,6 +16,7 @@ import (
 	"github.com/use-assay/assay/internal/horizon"
 	"github.com/use-assay/assay/internal/mechanics"
 	"github.com/use-assay/assay/internal/registry"
+	"github.com/use-assay/assay/internal/sac"
 	"github.com/use-assay/assay/internal/scan"
 )
 
@@ -73,7 +72,7 @@ type OnChainSafety struct {
 
 // registryReader reads the on-chain attestation for one asset. It is an
 // interface boundary rather than a concrete call so the outcome table test can
-// stub the chain; the production implementation is stellarRegistryReader.
+// stub the chain; the production implementation is newRegistryReader.
 type registryReader func(asset mechanics.Asset) (*OnChainSafety, error)
 
 // verifyScanFunc is the re-scan used by verify. It also returns the Subject the
@@ -243,53 +242,37 @@ func firstLineOf(s string) string {
 	return line
 }
 
-// stellarRegistryReader is the production registryReader: it derives the
-// asset's SAC id and reads get_safety through Soroban RPC simulation using
-// the internal/registry client, falling back to stellar CLI if necessary.
-// CONTRACT_ID / NETWORK / RPC_URL come from the environment with the same
-// defaults as the Makefile.
-func stellarRegistryReader(asset mechanics.Asset) (*OnChainSafety, error) {
-	contract := os.Getenv("ASSAY_CONTRACT_ID")
-	if contract == "" {
-		contract = registry.DefaultContractID
-	}
-	network := os.Getenv("ASSAY_NETWORK")
-	if network == "" {
-		network = "testnet"
-	}
-	rpcURL := os.Getenv("ASSAY_RPC_URL")
-	if rpcURL == "" {
-		rpcURL = registry.DefaultRPCURL
-	}
+// newRegistryReader returns a registryReader that derives the asset's SAC id
+// in-process via internal/sac and reads get_safety through Soroban RPC simulation.
+func newRegistryReader(rpcURL, contract, network string) registryReader {
+	return func(asset mechanics.Asset) (*OnChainSafety, error) {
+		sacStr, err := sac.Address(asset.Code, asset.Issuer, sac.Passphrase(network))
+		if err != nil {
+			return nil, fmt.Errorf("derive SAC id: %w", err)
+		}
 
-	sac, err := exec.Command("stellar", "contract", "id", "asset",
-		"--asset", asset.Code+":"+asset.Issuer, "--network", network).Output()
-	if err != nil {
-		return nil, fmt.Errorf("derive SAC id: %w", err)
-	}
-	sacStr := strings.TrimSpace(string(sac))
+		client := registry.New(rpcURL, contract)
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
 
-	client := registry.New(rpcURL, contract)
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	s, err := client.GetSafety(ctx, sacStr)
-	if err != nil {
-		if errors.Is(err, registry.ErrNotAttested) {
+		s, err := client.GetSafety(ctx, sacStr)
+		if err != nil {
+			if errors.Is(err, registry.ErrNotAttested) {
+				return nil, nil
+			}
+			return nil, fmt.Errorf("invoke get_safety: %w", err)
+		}
+		if s == nil {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("invoke get_safety: %w", err)
-	}
-	if s == nil {
-		return nil, nil
-	}
 
-	return &OnChainSafety{
-		Severity:     s.Severity,
-		Flags:        s.Flags,
-		EvidenceHash: s.EvidenceHash,
-		AttestedAt:   int64(s.AttestedAt),
-	}, nil
+		return &OnChainSafety{
+			Severity:     s.Severity,
+			Flags:        s.Flags,
+			EvidenceHash: s.EvidenceHash,
+			AttestedAt:   int64(s.AttestedAt),
+		}, nil
+	}
 }
 
 // differentialResult re-reads the issuer's flags through Soroban RPC and
@@ -440,7 +423,8 @@ func verifyBundle(path string, asJSON bool, w io.Writer) (int, error) {
 }
 
 func runVerify(args []string) error {
-	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
+	fs := newFlagSet("verify")
+	cache := cacheFlags(fs)
 	maxAge := fs.Int64("max-age", 0, "treat an attestation older than this many seconds as stale (0 disables the age check)")
 	asJSON := fs.Bool("json", false, "print the verdict as JSON for scripting")
 	bundlePath := fs.String("bundle", "",
@@ -448,7 +432,13 @@ func runVerify(args []string) error {
 	differentialEnabled := fs.Bool("differential", false,
 		"also re-read the issuer's flags through Soroban RPC; disagreement fails verification")
 	rpcURL := fs.String("rpc", differential.DefaultURL,
-		"Soroban RPC URL used by -differential")
+		"Soroban RPC URL used by -differential (distinct from -registry-rpc)")
+	registryRPC := fs.String("registry-rpc", envOr("ASSAY_RPC_URL", registry.DefaultRPCURL),
+		"Soroban RPC endpoint for the registry (env ASSAY_RPC_URL)")
+	contractID := fs.String("contract", envOr("ASSAY_CONTRACT_ID", registry.DefaultContractID),
+		"registry contract id (env ASSAY_CONTRACT_ID)")
+	network := fs.String("network", envOr("ASSAY_NETWORK", "testnet"),
+		"network used to derive the SAC id (env ASSAY_NETWORK)")
 	if err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -491,10 +481,11 @@ func runVerify(args []string) error {
 	if *differentialEnabled {
 		differentialRPC = *rpcURL
 	}
-	scanner := scan.New()
+	scanner := scan.NewWithOptions(cache())
+	reader := newRegistryReader(*registryRPC, *contractID, *network)
 	res, verdict := verifyAsset(ctx, asset, *maxAge, time.Now(),
 		scanner.ScanWithSubject,
-		stellarRegistryReader, differentialRPC)
+		reader, differentialRPC)
 	if verdict != nil {
 		return verdict
 	}

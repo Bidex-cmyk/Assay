@@ -1,6 +1,10 @@
 package api
 
 import (
+	"fmt"
+	"net"
+	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -115,4 +119,116 @@ func (l *RateLimiter) evictIdleLocked(now time.Time) {
 		}
 		delete(l.clients, key)
 	}
+}
+
+// ParseTrustedProxies parses a comma-separated list of CIDR strings or bare IP
+// addresses. Bare IPs are expanded to /32 (IPv4) or /128 (IPv6). An empty
+// string returns (nil, nil).
+func ParseTrustedProxies(csv string) ([]*net.IPNet, error) {
+	trimmed := strings.TrimSpace(csv)
+	if trimmed == "" {
+		return nil, nil
+	}
+	var nets []*net.IPNet
+	for _, raw := range strings.Split(trimmed, ",") {
+		s := strings.TrimSpace(raw)
+		if s == "" {
+			continue
+		}
+		if !strings.Contains(s, "/") {
+			ip := net.ParseIP(s)
+			if ip == nil {
+				return nil, fmt.Errorf("invalid trusted proxy IP or CIDR %q", s)
+			}
+			if ip.To4() != nil {
+				s += "/32"
+			} else {
+				s += "/128"
+			}
+		}
+		_, ipNet, err := net.ParseCIDR(s)
+		if err != nil {
+			return nil, fmt.Errorf("invalid trusted proxy CIDR %q: %w", s, err)
+		}
+		nets = append(nets, ipNet)
+	}
+	return nets, nil
+}
+
+// ClientKey extracts the client identifier for rate limiting from an HTTP
+// request.
+//
+// When trusted proxies are configured and the immediate peer (r.RemoteAddr) falls
+// within a trusted CIDR, it walks X-Forwarded-For from the right, skipping
+// trusted proxy hops, and uses the first untrusted address.
+//
+// If the immediate peer is not in any trusted CIDR (or no trusted proxies are
+// configured), headers are never trusted and the peer host is used directly.
+func ClientKey(r *http.Request, trusted []*net.IPNet) string {
+	peerHost := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		peerHost = host
+	}
+	peerHost = strings.TrimSpace(peerHost)
+
+	if len(trusted) == 0 {
+		return peerHost
+	}
+
+	peerIP := net.ParseIP(peerHost)
+	if peerIP == nil || !isIPInNets(peerIP, trusted) {
+		// Untrusted peer: never inspect X-Forwarded-For headers.
+		return peerHost
+	}
+
+	var hops []string
+	for _, v := range r.Header.Values("X-Forwarded-For") {
+		for _, part := range strings.Split(v, ",") {
+			part = strings.TrimSpace(part)
+			if part != "" {
+				hops = append(hops, part)
+			}
+		}
+	}
+	if len(hops) == 0 {
+		return peerHost
+	}
+
+	// Walk from the right (closest proxy to server) to the left (client).
+	for i := len(hops) - 1; i >= 0; i-- {
+		hop := hops[i]
+		hopHost := hop
+		if h, _, err := net.SplitHostPort(hop); err == nil {
+			hopHost = h
+		}
+		hopHost = strings.TrimSpace(hopHost)
+		hopIP := net.ParseIP(hopHost)
+		if hopIP != nil && isIPInNets(hopIP, trusted) {
+			// Trusted intermediate hop: skip.
+			continue
+		}
+		// First untrusted address encountered: this is the client.
+		return hopHost
+	}
+
+	// All hops were in trusted CIDRs; return the leftmost hop.
+	leftmost := hops[0]
+	if h, _, err := net.SplitHostPort(leftmost); err == nil {
+		leftmost = h
+	}
+	return strings.TrimSpace(leftmost)
+}
+
+func isIPInNets(ip net.IP, nets []*net.IPNet) bool {
+	for _, n := range nets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+// ClientKey extracts the client rate limit key for r using s.TrustedProxies.
+func (s *Server) ClientKey(r *http.Request) string {
+	return ClientKey(r, s.TrustedProxies)
 }

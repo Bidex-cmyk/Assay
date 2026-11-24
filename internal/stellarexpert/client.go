@@ -27,6 +27,7 @@ import (
 	"math/rand"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -289,6 +290,9 @@ func New(baseURL string) *Client {
 // NewWithOptions returns a Client for a given API root with the given cache
 // policy, defaulting to the public root when baseURL is empty.
 func NewWithOptions(baseURL string, opts Options) *Client {
+	if baseURL == "" {
+		baseURL = os.Getenv("ASSAY_STELLAREXPERT_URL")
+	}
 	if baseURL == "" {
 		baseURL = DefaultURL
 	}

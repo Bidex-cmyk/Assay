@@ -4,12 +4,16 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"flag"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/use-assay/assay/internal/attest"
+	"github.com/use-assay/assay/internal/differential"
 	"github.com/use-assay/assay/internal/mechanics"
+	"github.com/use-assay/assay/internal/registry"
+	"github.com/use-assay/assay/internal/sac"
 )
 
 func TestVerifyTextNamesNetwork(t *testing.T) {
@@ -363,5 +367,89 @@ func TestVerifyMatchesAnOlderEncoding(t *testing.T) {
 	if res.Outcome != outcomeMismatch || res.Local.Encoding != attest.PreimageVersionScanner {
 		t.Fatalf("changed evidence: outcome %s, encoding %s; want mismatch reported under v4",
 			res.Outcome, res.Local.Encoding)
+	}
+}
+
+func TestVerifyDerivesSACInProcessPinned(t *testing.T) {
+	// Pinned AQUA vectors from internal/sac/sac_test.go
+	const code = "AQUA"
+	const issuer = "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
+	const wantTestnet = "CDJF2JQINO7WRFXB2AAHLONFDPPI4M3W2UM5THGQQ7JMJDIEJYC4CMPG"
+	const wantPubnet = "CAUIKL3IYGMERDRUN6YSCLWVAKIFG5Q4YJHUKM4S4NJZQIA3BAS6OJPK"
+
+	testnetSAC, err := sac.Address(code, issuer, sac.Passphrase("testnet"))
+	if err != nil {
+		t.Fatalf("testnet derive: %v", err)
+	}
+	if testnetSAC != wantTestnet {
+		t.Errorf("AQUA testnet = %s, want %s", testnetSAC, wantTestnet)
+	}
+
+	pubnetSAC, err := sac.Address(code, issuer, sac.Passphrase("pubnet"))
+	if err != nil {
+		t.Fatalf("pubnet derive: %v", err)
+	}
+	if pubnetSAC != wantPubnet {
+		t.Errorf("AQUA pubnet = %s, want %s", pubnetSAC, wantPubnet)
+	}
+}
+
+func TestVerifyRegistryFlagsParsed(t *testing.T) {
+	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
+	registryRPC := fs.String("registry-rpc", envOr("ASSAY_RPC_URL", registry.DefaultRPCURL),
+		"Soroban RPC endpoint for the registry (env ASSAY_RPC_URL)")
+	contractID := fs.String("contract", envOr("ASSAY_CONTRACT_ID", registry.DefaultContractID),
+		"registry contract id (env ASSAY_CONTRACT_ID)")
+	network := fs.String("network", envOr("ASSAY_NETWORK", "testnet"),
+		"network used to derive the SAC id (env ASSAY_NETWORK)")
+	rpcURL := fs.String("rpc", differential.DefaultURL,
+		"Soroban RPC URL used by -differential (distinct from -registry-rpc)")
+
+	err := fs.Parse([]string{
+		"-registry-rpc", "https://custom-rpc.example.com",
+		"-contract", "CDJF2JQINO7WRFXB2AAHLONFDPPI4M3W2UM5THGQQ7JMJDIEJYC4CMPG",
+		"-network", "pubnet",
+		"-rpc", "https://diff-rpc.example.com",
+	})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if *registryRPC != "https://custom-rpc.example.com" {
+		t.Errorf("registry-rpc = %s", *registryRPC)
+	}
+	if *contractID != "CDJF2JQINO7WRFXB2AAHLONFDPPI4M3W2UM5THGQQ7JMJDIEJYC4CMPG" {
+		t.Errorf("contract = %s", *contractID)
+	}
+	if *network != "pubnet" {
+		t.Errorf("network = %s", *network)
+	}
+	if *rpcURL != "https://diff-rpc.example.com" {
+		t.Errorf("rpc = %s", *rpcURL)
+	}
+}
+
+func TestVerifyAndRegistryHistoryShareRegistryFlags(t *testing.T) {
+	old := flagSetOutput
+	var buf bytes.Buffer
+	flagSetOutput = &buf
+	t.Cleanup(func() { flagSetOutput = old })
+
+	// Check flags registered by verify on -h
+	_ = runVerify([]string{"-h"})
+	verifyHelp := buf.String()
+	buf.Reset()
+
+	// Check flags registered by registry-history on -h
+	_ = runRegistryHistory([]string{"-h"}, commandDeps{stderr: &buf})
+	historyHelp := buf.String()
+
+	registryFlags := []string{"-registry-rpc", "-contract", "-network"}
+	for _, flag := range registryFlags {
+		if !strings.Contains(verifyHelp, flag) {
+			t.Errorf("verify does not register registry flag %s", flag)
+		}
+		if !strings.Contains(historyHelp, flag) {
+			t.Errorf("registry-history does not register registry flag %s", flag)
+		}
 	}
 }

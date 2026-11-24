@@ -17,7 +17,9 @@ binary that has to be checked before it is trusted to check anything else.
 ## Before you start
 
 You need a shell, network access to GitHub and Stellar testnet, the GitHub CLI
-(`gh`), `sha256sum`, and Stellar CLI **27.1.0**. Install `gh` from
+(`gh`), and `sha256sum`. Stellar CLI **27.1.0** is needed only if running the manual step-by-step
+contract commands below; `assay verify` itself computes SAC addresses in-process and simulates
+registry reads without requiring the Stellar CLI. Install `gh` from
 [cli.github.com](https://cli.github.com/) and Stellar CLI using the
 [official installation instructions](https://developers.stellar.org/docs/tools/stellar-cli).
 Check the installed version with `stellar --version`; the documented contract
@@ -195,7 +197,7 @@ procedure is measuring the trustworthiness of a program you have not checked.
 The registry keys on an asset's **Stellar Asset Contract address**, which is
 derived from the network passphrase. The same asset has a different address on
 testnet than on pubnet, so derive it for the network you are verifying against
-and do not copy one across.
+and do not copy one across. (`assay verify` derives this in-process; for manual inspection):
 
 ```sh
 stellar contract id asset \

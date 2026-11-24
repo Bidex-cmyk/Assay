@@ -53,18 +53,6 @@ var ErrBadAsset = errors.New("scan: invalid asset")
 // Documented in docs/cli.md (exit code) and docs/api.md (HTTP status).
 var ErrNativeAsset = errors.New("native asset has no issuer and no authorization flags")
 
-// ErrBadHolder reports an invalid holder account ID.
-var ErrBadHolder = errors.New("scan: invalid holder account ID")
-
-// ValidateHolder checks that id is a valid Stellar ed25519 public key suitable
-// for use as a holder account ID.
-func ValidateHolder(id string) error {
-	if !issuerRE.MatchString(id) {
-		return fmt.Errorf("%w: %q", ErrBadHolder, id)
-	}
-	return nil
-}
-
 // ParseAsset accepts the canonical CODE-ISSUER form, the colon-separated
 // CODE:ISSUER form most Stellar tools print, and a paste-able stellar.expert
 // asset URL, and validates both halves of the identifier.
@@ -258,6 +246,14 @@ type Options struct {
 	// re-fetches both curated sources. Use it when a stale answer would be
 	// unacceptable and the extra requests are affordable.
 	NoReputationCache bool
+
+	// AssetListTTL bounds how long a configured SEP-0042 list may be served
+	// from cache, measured from the fetch that produced it. A zero TTL disables
+	// list caching. Lists are large, change rarely and are re-fetched on every
+	// scan that configures them, so they are cached like the curated
+	// reputation answers; a hit keeps the list's original fetch time, which is
+	// what the report carries. See docs/caching.md.
+	AssetListTTL time.Duration
 }
 
 // DefaultOptions returns the production cache policy.
@@ -265,6 +261,7 @@ func DefaultOptions() Options {
 	return Options{
 		ReputationDirectoryTTL: stellarexpert.DefaultDirectoryTTL,
 		ReputationBlocklistTTL: stellarexpert.DefaultBlocklistTTL,
+		AssetListTTL:           assetlist.DefaultTTL,
 	}
 }
 
@@ -291,7 +288,9 @@ func New() *Scanner {
 // pointing one at http://127.0.0.1:1 makes that source fail and the scan
 // report undetermined (or fail, for Horizon) rather than succeed.
 //
-// Only the reputation lookups are cached. Horizon is left uncached on purpose:
+// The reputation lookups and configured SEP-0042 lists are cached; each cached
+// answer keeps its original fetch time, and expiry always means a re-fetch.
+// Horizon is left uncached on purpose:
 // issuer authorization flags are the capability axis severity is derived from,
 // they can change in one ledger close (~5 s), and there is no retrieved-at
 // field in an attestation that could carry the age of a stale flag read. A TTL
@@ -304,7 +303,7 @@ func NewWithOptions(opts Options) *Scanner {
 		Toml:    sep1.NewFetcher(),
 		Expert:  stellarexpert.NewWithOptions(os.Getenv("ASSAY_STELLAREXPERT_URL"), expertOptions(opts)),
 		Engine:  mechanics.NewEngine(),
-		Lists:   assetlist.New(),
+		Lists:   assetlist.NewWithOptions(assetlist.Options{TTL: opts.AssetListTTL}),
 		Network: horizon.PublicNet,
 	}
 }
@@ -685,10 +684,26 @@ func (s *Scanner) SubjectWithHolder(ctx context.Context, a mechanics.Asset, hold
 	if holder == "" {
 		return sub, nil
 	}
-	sub.Holder = holder
+	// An M… holder is a virtual account: it has no ledger entry, so the
+	// trustline lookup has to be made against the base G… account. The
+	// original address and its multiplexing id are kept on the Subject so the
+	// report can say the resolution happened rather than presenting a trustline
+	// for one address under another address's name (issue #410). Callers that
+	// reach here through the API or CLI have already had the identifier
+	// validated; the error path exists so a programmatic caller gets the same
+	// refusal instead of a lookup against a malformed address.
+	base, muxedID, muxed, err := ParseHolder(holder)
+	if err != nil {
+		return nil, err
+	}
+	sub.Holder = base
+	if muxed {
+		sub.HolderMuxed = holder
+		sub.HolderMuxedID = muxedID
+	}
 	tlCtx, cancel := context.WithTimeout(ctx, s.fetchTimeout())
 	defer cancel()
-	tl, err := s.Horizon.Trustline(tlCtx, holder, a.Code, a.Issuer)
+	tl, err := s.Horizon.Trustline(tlCtx, base, a.Code, a.Issuer)
 	if errors.Is(err, horizon.ErrNotFound) {
 		// Holder does not hold the asset; HolderTrustline stays nil with no
 		// error. The source did answer — "not listed" — so this records a

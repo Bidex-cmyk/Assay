@@ -23,10 +23,14 @@ paths:
           required: false
           schema:
             type: string
-            pattern: '^G[A-Z2-7]{55}$'
+            pattern: '^(G[A-Z2-7]{55}|M[A-Z2-7]{68})$'
           example: GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H
           description: >-
-            Optional holder account ID (G..., 56 characters). Answers "am I
+            Optional holder account ID: a G... account (56 characters) or an
+            M... muxed account (69 characters). A muxed address is resolved to
+            its base G... account for the trustline lookup, and the evidence
+            records the original address, its multiplexing id, and the account
+            that was read. Answers "am I
             exposed?" for that account: the scan reads the holder's trustline
             and adds a "trustline" finding with the trustline's
             is_clawback_enabled and is_authorized flags, adding the
@@ -50,8 +54,8 @@ paths:
                 $ref: '#/components/schemas/Report'
         '400':
           description: >-
-            Invalid request parameters (including a holder that is not a G...
-            account ID), or an asset identifier naming the
+            Invalid request parameters (including a holder that is neither a
+            G... account nor an M... muxed account), or an asset identifier naming the
             network's native asset (native/XLM), which has no issuer and no
             authorization flags and is therefore never scanned or attested.
           content:
@@ -171,7 +175,10 @@ paths:
           required: true
           schema:
             type: string
-          description: Holder's account address (G...)
+          description: >-
+            Holder's account address: a G... account, or an M... muxed account
+            that resolves to one. A muxed account's trustlines are read from
+            its base G... account, and the evidence records the resolution.
         - name: limit
           in: query
           required: false

@@ -140,11 +140,11 @@ func TestScanRecordThenReplayIsDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseAsset: %v", err)
 	}
-	d := commandDeps{stdout: io.Discard, stderr: io.Discard}
+	d := commandDeps{stdout: io.Discard, stderr: io.Discard, scanner: newScanner}
 	dir := t.TempDir()
 
 	// 1. Record a live scan.
-	scanFn, finish, err := scanFuncForRecording(nil, d, dir, "")
+	scanFn, finish, err := scanFuncForRecording(nil, scan.DefaultOptions(), d, dir, "")
 	if err != nil {
 		t.Fatalf("record setup: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestScanRecordThenReplayIsDeterministic(t *testing.T) {
 
 	// 3. Replay. No network exists to reach; an unrecorded request would be
 	// a loud error rather than a live fetch.
-	replayFn, _, err := scanFuncForRecording(nil, d, "", dir)
+	replayFn, _, err := scanFuncForRecording(nil, scan.DefaultOptions(), d, "", dir)
 	if err != nil {
 		t.Fatalf("replay setup: %v", err)
 	}
@@ -211,10 +211,10 @@ func TestRecordingManifestAndLoudReplayMiss(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseAsset: %v", err)
 	}
-	d := commandDeps{stdout: io.Discard, stderr: io.Discard}
+	d := commandDeps{stdout: io.Discard, stderr: io.Discard, scanner: newScanner}
 	dir := t.TempDir()
 
-	scanFn, finish, err := scanFuncForRecording(nil, d, dir, "")
+	scanFn, finish, err := scanFuncForRecording(nil, scan.DefaultOptions(), d, dir, "")
 	if err != nil {
 		t.Fatalf("record setup: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestRecordingManifestAndLoudReplayMiss(t *testing.T) {
 	}
 	finish()
 
-	replayFn, _, err := scanFuncForRecording(nil, d, "", dir)
+	replayFn, _, err := scanFuncForRecording(nil, scan.DefaultOptions(), d, "", dir)
 	if err != nil {
 		t.Fatalf("replay setup: %v", err)
 	}
@@ -253,7 +253,7 @@ func TestScanRecordAndReplayFlagsAreMutuallyExclusive(t *testing.T) {
 }
 
 func TestScanReplayMissingRecordingFailsBeforeAnyFetch(t *testing.T) {
-	d := commandDeps{stdout: io.Discard, stderr: io.Discard}
+	d := commandDeps{stdout: io.Discard, stderr: io.Discard, scanner: newScanner}
 	err := runWith([]string{"scan", "-replay", t.TempDir(), "USDC-" + rrIssuer}, d)
 	if err == nil || !strings.Contains(err.Error(), "replay: read manifest") {
 		t.Fatalf("error = %v, want the manifest refusal", err)
