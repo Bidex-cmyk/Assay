@@ -69,6 +69,7 @@ pub fn is_safe_masked(env: Env, asset: Address, forbidden_mask: u32, max_age_sec
 pub fn attest(env: Env, asset: Address, severity: u32, flags: u32, evidence_hash: BytesN<32>) -> Result<(), Error>;
 pub fn attest_many(env: Env, attestations: Vec<Attestation>) -> Result<(), Error>;
 pub fn revoke(env: Env, asset: Address) -> Result<(), Error>;
+pub fn revoke_many(env: Env, assets: Vec<Address>) -> Result<(), Error>;
 pub fn init(env: Env, admin: Address) -> Result<(), Error>;
 pub fn transfer_admin(env: Env, new_admin: Address) -> Result<(), Error>;
 pub fn accept_admin(env: Env) -> Result<(), Error>;
@@ -101,10 +102,23 @@ a wasm hash.
   safely ignore (a new `get_safety_many` does not break an existing
   `get_safety` caller), and documentation-only changes.
 
+### Version history
+
 Adding `version()` itself establishes version 1: the interface as of that
-build is version 1. Version 2 adds `cancel_admin_transfer` and the
-`cancel_admin` event. The constant is an ABI value and is parsed by the Go ABI
-drift test, so it cannot drift from the deployed interface without a red build.
+build is version 1. Every later bump is recorded here, one row per version.
+This table is the changelog the contract's rustdoc points at, and the
+`interface_version_history_is_documented` test fails if `INTERFACE_VERSION`
+names a version with no row.
+
+| Version | Change |
+| --- | --- |
+| 1 | `version()` established the interface. |
+| 2 | Adds `cancel_admin_transfer` and the `cancel_admin` event, and `Error::InvalidAsset` for an address that cannot name a SAC. |
+| 3 | Adds `preimage_version: u32` to the stored `Safety`, written by `attest` and `attest_many`, so a verifier can tell which encoding produced `evidence_hash`. |
+| 4 | Adds `Quorum::InvalidArguments`, so a malformed `quorum` call is no longer reported as `Quorum::Unavailable`. |
+
+The constant is an ABI value and is parsed by the Go ABI drift test, so it
+cannot drift from the deployed interface without a red build.
 
 | Error | Code | Returned by |
 | --- | --- | --- |
@@ -311,6 +325,17 @@ That is a choice, not something left out:
 
 If a future consumer needs to prove on-chain that an asset *was* revoked,
 that is a new feature with its own ABI. It is not implied by this one.
+
+### `revoke_many`: withdrawing a batch of attestations
+
+`revoke_many(assets: Vec<Address>)` withdraws a batch of attestations in a single transaction. It is the batch counterpart to `revoke`:
+
+- **Admin-only:** requires authorization from the current admin.
+- **Capped at `MAX_BATCH_SIZE` (50):** a batch with more than 50 assets returns `Error::BatchTooLarge` and removes nothing.
+- **All-or-nothing:** a validation phase checks that every asset in `assets` is currently attested before any entry is removed. If any asset has no attestation, the call returns `Error::NotAttested` and nothing is removed.
+- **Events:** publishes one `Revoked` event per element with the current ledger timestamp (`revoked_at`).
+- **Empty batches:** an empty batch succeeds immediately and writes nothing (honest all-or-nothing over zero elements).
+- **TTL:** a non-empty batch extends the contract instance TTL to the network maximum.
 
 #### Migration
 

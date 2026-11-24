@@ -2,6 +2,7 @@ package mechanics_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -125,8 +126,20 @@ func TestTrustlineDeauthorized(t *testing.T) {
 func TestTrustlineHolderDoesNotHoldAsset(t *testing.T) {
 	f := runTL(t, tlSubject(tlTestHolder, nil, ""))
 
-	if !f.Undetermined {
-		t.Fatal("absent trustline must be undetermined: the per-holder question cannot be answered")
+	if f.Undetermined {
+		t.Fatal("absent trustline must be determined: it is a ledger fact that the holder holds no asset")
+	}
+	if len(f.Evidence) != 1 {
+		t.Fatalf("absent trustline evidence entries = %d, want 1: %+v", len(f.Evidence), f.Evidence)
+	}
+	if f.Evidence[0].Claim != "no trustline for asset TESTTKN-"+tlTestIssuer {
+		t.Errorf("unexpected no-trustline evidence claim: %q", f.Evidence[0].Claim)
+	}
+	if f.Evidence[0].Attempted {
+		t.Error("no trustline is a successful ledger read, not an attempted fetch")
+	}
+	if f.Evidence[0].URL != "https://horizon.stellar.org/accounts/"+tlTestHolder {
+		t.Errorf("no-trustline evidence URL = %q", f.Evidence[0].URL)
 	}
 }
 
@@ -160,6 +173,42 @@ func TestTrustlineNoHolderSkips(t *testing.T) {
 	}
 	if f.Severity != mechanics.Clear {
 		t.Errorf("no-holder path must not set severity; got %v", f.Severity)
+	}
+}
+
+// TestTrustlineMuxedHolderSaysSoInEvidence covers issue #410: when the caller
+// supplied an M… address, the finding must name both the address asked about
+// and the base account that was actually read, so a reader cannot mistake one
+// account's trustline for another's.
+func TestTrustlineMuxedHolderSaysSoInEvidence(t *testing.T) {
+	const (
+		muxed = "MA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUAAAAAAAAAABUTGI4"
+		base  = "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
+	)
+	tl := &horizon.TrustlineBalance{
+		AssetCode: "TESTTKN", AssetIssuer: tlTestIssuer,
+		IsAuthorized: true, IsClawbackEnabled: true,
+	}
+	s := tlSubject(base, tl, "")
+	s.HolderMuxed = muxed
+	s.HolderMuxedID = 420
+
+	f := runTL(t, s)
+	if len(f.Evidence) == 0 {
+		t.Fatal("no evidence recorded for a muxed holder")
+	}
+	claim := f.Evidence[0].Claim
+	if !strings.Contains(claim, muxed) {
+		t.Errorf("evidence claim does not name the muxed address asked about: %q", claim)
+	}
+	if !strings.Contains(claim, base) {
+		t.Errorf("evidence claim does not name the base account actually read: %q", claim)
+	}
+	if !strings.Contains(claim, "420") {
+		t.Errorf("evidence claim does not name the multiplexing id: %q", claim)
+	}
+	if !strings.Contains(claim, "trustline TESTTKN-"+tlTestIssuer) {
+		t.Errorf("evidence claim lost the trustline it describes: %q", claim)
 	}
 }
 

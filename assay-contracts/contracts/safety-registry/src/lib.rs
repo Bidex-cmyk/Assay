@@ -88,10 +88,17 @@ pub const POLICY_MASK_FREEZE_INCLUSIVE: u32 = MECH_AUTH_REVOCABLE | MECH_CLAWBAC
 ///
 /// Bump this whenever the entrypoint set, the [`Safety`] or [`Attestation`]
 /// shapes, the error codes, or the event schema change. Additive read-only
-/// entrypoints do not require a bump; removing or renaming one does. Version 1
-/// established the interface with [`Self::version`]; version 2 adds
-/// [`Self::cancel_admin_transfer`] and the [`AdminTransferCancelled`] event.
-/// Version 4 adds [`Quorum::InvalidArguments`], so a miscalibrated
+/// entrypoints do not require a bump; removing or renaming one does. Each bump
+/// is recorded in `docs/contract-interface.md` ("Interface versioning"), and a
+/// test fails if the constant runs ahead of that history.
+///
+/// Version 1 established the interface with [`Self::version`]. Version 2 adds
+/// [`Self::cancel_admin_transfer`] and the [`AdminTransferCancelled`] event,
+/// plus [`Error::InvalidAsset`], which `attest` and `attest_many` return for an
+/// address that cannot name a SAC. Version 3 adds `preimage_version` to the
+/// stored [`Safety`], written by [`Self::attest`] and [`Self::attest_many`], so
+/// a verifier can tell which encoding produced its `evidence_hash`. Version 4
+/// adds [`Quorum::InvalidArguments`], so a miscalibrated
 /// [`SafetyRegistry::quorum`] call is no longer reported as
 /// [`Quorum::Unavailable`] (an outage). A `match` on [`Quorum`] that was
 /// exhaustive under version 3 no longer compiles, and a consumer decoding the
@@ -861,6 +868,55 @@ impl SafetyRegistry {
             revoked_at: env.ledger().timestamp(),
         }
         .publish(&env);
+        Ok(())
+    }
+
+    /// Withdraws a batch of attestations in a single transaction, restoring the
+    /// never-attested state for each asset.
+    ///
+    /// It is admin-only, capped at [`MAX_BATCH_SIZE`], and enforces all-or-nothing
+    /// execution: if any asset in `assets` has no attestation, the call returns
+    /// [`Error::NotAttested`] and nothing is removed.
+    ///
+    /// Empty batches succeed and do nothing. For non-empty batches, one [`Revoked`]
+    /// event is published per asset, and the contract instance TTL is extended.
+    pub fn revoke_many(env: Env, assets: Vec<Address>) -> Result<(), Error> {
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .ok_or(Error::NotInitialized)?;
+        admin.require_auth();
+
+        if assets.len() > MAX_BATCH_SIZE {
+            return Err(Error::BatchTooLarge);
+        }
+
+        // Phase one: validate every element before anything is removed.
+        // If any asset is missing an attestation, return NotAttested and remove nothing.
+        for asset in assets.iter() {
+            let key = DataKey::Safety(asset.clone());
+            if !env.storage().persistent().has(&key) {
+                return Err(Error::NotAttested);
+            }
+        }
+
+        if assets.is_empty() {
+            return Ok(());
+        }
+
+        // Phase two: remove all attestations and publish one Revoked event per asset.
+        let revoked_at = env.ledger().timestamp();
+        for asset in assets.iter() {
+            let key = DataKey::Safety(asset.clone());
+            env.storage().persistent().remove(&key);
+            Revoked {
+                asset: asset.clone(),
+                revoked_at,
+            }
+            .publish(&env);
+        }
+        extend_instance(&env);
         Ok(())
     }
 

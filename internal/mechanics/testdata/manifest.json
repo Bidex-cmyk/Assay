@@ -27,6 +27,13 @@
       "dataset_role": "issuer-published SEP-1 stellar.toml records"
     }
   ],
+  "regression_fixtures": [
+    {"fixture": "doge-disagreeing-sources", "purpose": "Exercise disagreement between reputation source records."},
+    {"fixture": "synthetic-flag-disagreement", "purpose": "Exercise disagreement between Horizon asset and account issuer flags."},
+    {"fixture": "synthetic-reputation-outage", "purpose": "Exercise a constructed StellarExpert reputation outage."},
+    {"fixture": "synthetic-impossible-asset-record", "purpose": "Exercise CAP-0035 clawback without revocable on the asset copy."},
+    {"fixture": "synthetic-impossible-account-record", "purpose": "Exercise CAP-0035 clawback without revocable on the account copy."}
+  ],
   "subjects": [
     {
       "fixture": "aqua-clear-verified",
@@ -116,7 +123,8 @@
         "https://horizon.stellar.org/accounts/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
         "https://circle.com/.well-known/stellar.toml",
         "https://api.stellar.expert/explorer/directory/blocked-domains/circle.com",
-        "https://api.stellar.expert/explorer/directory/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
+        "https://api.stellar.expert/explorer/directory/GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+        "https://api.stellar.expert/explorer/public/asset/USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN"
       ]
     },
     {

@@ -45,6 +45,49 @@ func TestNativeMatchesRecordedControl(t *testing.T) {
 	}
 }
 
+func TestPassphrase(t *testing.T) {
+	for _, tc := range []struct {
+		network, want string
+	}{
+		{"testnet", "Test SDF Network ; September 2015"},
+		{"TESTNET", "Test SDF Network ; September 2015"},
+		{"pubnet", "Public Global Stellar Network ; September 2015"},
+		{"PUBNET", "Public Global Stellar Network ; September 2015"},
+		{"public", "Public Global Stellar Network ; September 2015"},
+		{"futurenet", "Test SDF Future Network ; October 2022"},
+		{"standalone", "Standalone Network ; February 2017"},
+		{"Custom Passphrase", "Custom Passphrase"},
+	} {
+		if got := Passphrase(tc.network); got != tc.want {
+			t.Errorf("Passphrase(%q) = %q, want %q", tc.network, got, tc.want)
+		}
+	}
+}
+
+func TestAddressPinsKnownAssetOnTestnetAndPubnet(t *testing.T) {
+	v := testnetVectors[0] // AQUA
+	testnetSAC, err := Address(v.code, v.issuer, Passphrase("testnet"))
+	if err != nil {
+		t.Fatalf("testnet Address: %v", err)
+	}
+	if testnetSAC != v.want {
+		t.Errorf("AQUA testnet = %s, want %s", testnetSAC, v.want)
+	}
+
+	pubnetSAC, err := Address(v.code, v.issuer, Passphrase("pubnet"))
+	if err != nil {
+		t.Fatalf("pubnet Address: %v", err)
+	}
+	// AQUA on pubnet is pinned to its derived SAC address.
+	const wantPubnet = "CAUIKL3IYGMERDRUN6YSCLWVAKIFG5Q4YJHUKM4S4NJZQIA3BAS6OJPK"
+	if pubnetSAC != wantPubnet {
+		t.Errorf("AQUA pubnet = %s, want %s", pubnetSAC, wantPubnet)
+	}
+	if pubnetSAC == testnetSAC {
+		t.Fatal("pubnet and testnet addresses must differ")
+	}
+}
+
 func TestAddressIsNetworkScoped(t *testing.T) {
 	v := testnetVectors[0]
 	pubnet, err := Address(v.code, v.issuer, "Public Global Stellar Network ; September 2015")

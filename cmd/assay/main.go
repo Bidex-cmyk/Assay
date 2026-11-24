@@ -56,6 +56,10 @@ type commandDeps struct {
 	// scan fetches and classifies one asset. It is injected so tests never
 	// touch the network.
 	scan func(context.Context, mechanics.Asset) (*mechanics.Report, error)
+	// scanner builds a production Scanner for the given SEP-0042 lists and
+	// cache policy. It is injected so a test can observe what a command wires
+	// without constructing a transport.
+	scanner func([]string, scan.Options) *scan.Scanner
 	// serve starts the HTTP API. It is injected so dispatch can be tested
 	// without binding a port.
 	serve func([]string, *slog.Logger) error
@@ -69,15 +73,29 @@ func defaultDeps() commandDeps {
 		scan: func(ctx context.Context, a mechanics.Asset) (*mechanics.Report, error) {
 			return scan.New().Scan(ctx, a)
 		},
-		serve: runServe,
+		scanner: newScanner,
+		serve:   runServe,
 	}
+}
+
+// flagSetOutput is where a command's flag list is printed. It is a variable so
+// a test can capture the flags a command registers without starting it.
+var flagSetOutput io.Writer = os.Stderr
+
+// newFlagSet is the one place a command's FlagSet is built, so every command
+// reports help to the same writer.
+func newFlagSet(name string) *flag.FlagSet {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(flagSetOutput)
+	return fs
 }
 
 func usage(w io.Writer) {
 	_, _ = fmt.Fprint(w, `usage:
   assay scan CODE-ISSUER          classify one asset and print the report as JSON
   assay attestation CODE-ISSUER   print the on-chain attest() arguments for one asset
-  assay verify [-json] [-max-age SECS] [-differential [-rpc URL]] CODE-ISSUER
+  assay verify [-json] [-max-age SECS] [-differential [-rpc URL]]
+               [-registry-rpc URL] [-contract C...] [-network NETWORK] CODE-ISSUER
                                   compare a live scan with the on-chain attestation
                                   (with -differential, also re-read issuer flags via RPC)
   assay verify -bundle IN [-json]
@@ -86,13 +104,13 @@ func usage(w io.Writer) {
                                   compare two saved reports and print what changed
   assay history [-guarantee] [-raw] [-server URL] CODE-ISSUER
                                   print the asset's observation history
-  assay registry-history [-rpc URL] [-contract C...] [-json] ASSET
+  assay registry-history [-registry-rpc URL] [-rpc URL] [-contract C...] [-network NETWORK] [-json] ASSET
                                   print the registry's attest/revoke events for an asset
                                   (CODE-ISSUER or SAC address), bounded by RPC event retention
   assay verify-preimage [-version VERSION] HASH PREIMAGE
                                   compare a stored hash with canonical preimage bytes
   assay checks                    print every check's ID and description
-  assay serve [-addr] [-history PATH] [-observe FILE] [-observe-interval DURATION]
+  assay serve [-addr] [-history PATH] [-history-retention N] [-observe FILE] [-observe-interval DURATION]
                                   serve the HTTP API and UI
   assay version                   print scanner identity, preimage encodings
                                   and build (VCS, Go) information
@@ -100,7 +118,10 @@ func usage(w io.Writer) {
 Commands that scan also accept:
   -cache-directory-ttl D   reuse a curated directory answer for D (0 disables)
   -cache-blocklist-ttl D   reuse a blocklist answer for D (0 disables)
-  -no-cache                re-fetch curated sources on every scan
+  -no-cache                re-fetch curated sources and asset lists on every scan
+
+Commands that consume SEP-0042 asset lists (scan, attestation, history, serve)
+also accept:
   -asset-lists URL[,URL...]
                            SEP-0042 Stellar Asset Lists to consume
                            (repeatable). No list is used by default.
@@ -124,10 +145,18 @@ The history command additionally accepts:
   -server URL             fetch history from a running assay server instead of
                           computing from a local scan (e.g. http://localhost:8080)
 
+The verify command additionally accepts:
+  -registry-rpc URL       Soroban RPC endpoint for the registry (env ASSAY_RPC_URL)
+  -contract ID            registry contract id (env ASSAY_CONTRACT_ID)
+  -network NAME           network used to derive the SAC id (env ASSAY_NETWORK)
+
 The serve command additionally accepts:
+  -history-retention N    observations kept per asset (default 256)
   -observe FILE           path to asset list file for scheduled observation
   -observe-interval DURATION
                           interval between scheduled scans (default 6h)
+  -trusted-proxies CIDR[,CIDR...]
+                          trusted reverse proxy CIDRs for rate limiting
 `)
 }
 
@@ -174,8 +203,9 @@ func runWith(args []string, d commandDeps) error {
 }
 
 func runScan(args []string, d commandDeps) error {
-	fs := flag.NewFlagSet("scan", flag.ContinueOnError)
+	fs := newFlagSet("scan")
 	assetLists := assetListFlags(fs)
+	cache := cacheFlags(fs)
 	recordDir := fs.String("record", "",
 		"save every upstream response into DIR for later -replay")
 	replayDir := fs.String("replay", "",
@@ -194,7 +224,7 @@ func runScan(args []string, d commandDeps) error {
 		return fmt.Errorf("-record and -replay are mutually exclusive")
 	}
 
-	scanFn, finish, err := scanFuncForRecording(assetLists(), d, *recordDir, *replayDir)
+	scanFn, finish, err := scanFuncForRecording(assetLists(), cache(), d, *recordDir, *replayDir)
 	if err != nil {
 		return err
 	}
@@ -226,11 +256,11 @@ func runScan(args []string, d commandDeps) error {
 // fetchers' transport in a recorder; -replay replaces it with the recording.
 // Nothing else about the scan changes — same fetches, same engine — which is
 // what makes a replayed report comparable to the recorded one.
-func scanFuncForRecording(lists []string, d commandDeps, recordDir, replayDir string) (func(context.Context, mechanics.Asset) (*mechanics.Report, error), func(), error) {
+func scanFuncForRecording(lists []string, opts scan.Options, d commandDeps, recordDir, replayDir string) (func(context.Context, mechanics.Asset) (*mechanics.Report, error), func(), error) {
 	if recordDir == "" && replayDir == "" {
-		return scanFuncFor(lists, d), func() {}, nil
+		return scanFuncFor(lists, opts, d), func() {}, nil
 	}
-	scanner := newScanner(lists)
+	scanner := d.scanner(lists, opts)
 
 	if recordDir != "" {
 		rec, err := replay.NewRecorder(recordDir, scanner.Horizon.HTTP.Transport)
@@ -272,11 +302,11 @@ func wireTransport(s *scan.Scanner, rt http.RoundTripper) {
 // SEP-0042 list is configured it returns the injected dependency, so dispatch
 // tests never touch the network; when lists are named it wires a production
 // scanner configured to consult them.
-func scanFuncFor(lists []string, d commandDeps) func(context.Context, mechanics.Asset) (*mechanics.Report, error) {
-	if len(lists) == 0 {
+func scanFuncFor(lists []string, opts scan.Options, d commandDeps) func(context.Context, mechanics.Asset) (*mechanics.Report, error) {
+	if len(lists) == 0 && opts == scan.DefaultOptions() {
 		return d.scan
 	}
-	return newScanner(lists).Scan
+	return d.scanner(lists, opts).Scan
 }
 
 // assetListFlags registers the -asset-lists flag shared by every command that
@@ -297,11 +327,38 @@ func assetListFlags(fs *flag.FlagSet) func() []string {
 }
 
 // newScanner returns a production Scanner configured to consult the given
-// SEP-0042 asset lists.
-func newScanner(lists []string) *scan.Scanner {
-	sc := scan.New()
+// SEP-0042 asset lists under the given reputation cache policy.
+func newScanner(lists []string, opts scan.Options) *scan.Scanner {
+	sc := scan.NewWithOptions(opts)
 	sc.AssetListURLs = lists
 	return sc
+}
+
+// cacheFlags registers the reputation-cache flags shared by every command that
+// scans, and returns the policy they describe. docs/caching.md tells an operator
+// to reach for these flags, so every command the document names has to register
+// them.
+func cacheFlags(fs *flag.FlagSet) func() scan.Options {
+	defaults := scan.DefaultOptions()
+	directoryTTL := fs.Duration("cache-directory-ttl", defaults.ReputationDirectoryTTL,
+		"reuse a curated directory answer for this long (0 disables)")
+	blocklistTTL := fs.Duration("cache-blocklist-ttl", defaults.ReputationBlocklistTTL,
+		"reuse a blocklist answer for this long (0 disables)")
+	noCache := fs.Bool("no-cache", false, "re-fetch curated sources and asset lists on every scan")
+	return func() scan.Options {
+		opts := scan.Options{
+			ReputationDirectoryTTL: *directoryTTL,
+			ReputationBlocklistTTL: *blocklistTTL,
+			NoReputationCache:      *noCache,
+			AssetListTTL:           defaults.AssetListTTL,
+		}
+		// -no-cache means every consumed signal is re-read, not only the
+		// reputation endpoints; a cached asset list would contradict its help.
+		if *noCache {
+			opts.AssetListTTL = 0
+		}
+		return opts
+	}
 }
 
 // listFlag collects repeated -asset-lists values as well as comma-separated
@@ -336,8 +393,9 @@ func (l *listFlag) Set(v string) error {
 // or the full assay-evidence-vN line; an empty value keeps the default
 // (newest binding wins). A verifier compares like with like because of it.
 func runAttestation(args []string, d commandDeps) error {
-	fs := flag.NewFlagSet("attestation", flag.ContinueOnError)
+	fs := newFlagSet("attestation")
 	assetLists := assetListFlags(fs)
+	cache := cacheFlags(fs)
 	preimage := fs.Bool("preimage", false, "include the canonical bytes evidence_hash commits to")
 	raw := fs.Bool("raw", false, "print only the attest() arguments, tab-separated, for scripting")
 	preimageVersion := fs.String("preimage-version", "",
@@ -366,7 +424,7 @@ func runAttestation(args []string, d commandDeps) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	scanFn := scanFuncFor(assetLists(), d)
+	scanFn := scanFuncFor(assetLists(), cache(), d)
 	finish := func() {}
 	recordingDir := ""
 	if *bundleOut != "" {
@@ -378,7 +436,7 @@ func runAttestation(args []string, d commandDeps) error {
 		recordingDir = dir
 		// Record into a private directory first; the archive is written only
 		// after the report is derived, so a failed scan leaves no half bundle.
-		scanFn, finish, err = scanFuncForRecording(assetLists(), d, recordingDir, "")
+		scanFn, finish, err = scanFuncForRecording(assetLists(), cache(), d, recordingDir, "")
 		if err != nil {
 			return err
 		}
@@ -443,8 +501,9 @@ func runAttestation(args []string, d commandDeps) error {
 }
 
 func runHistory(args []string, d commandDeps) error {
-	fs := flag.NewFlagSet("history", flag.ContinueOnError)
+	fs := newFlagSet("history")
 	assetLists := assetListFlags(fs)
+	cache := cacheFlags(fs)
 	guarantee := fs.Bool("guarantee", false, "exit non-zero when there is no history")
 	raw := fs.Bool("raw", false, "print only the history, tab-separated, for scripting")
 	serverURL := fs.String("server", "", "fetch history from a running assay server (e.g. http://localhost:8080)")
@@ -473,7 +532,7 @@ func runHistory(args []string, d commandDeps) error {
 		}
 	} else {
 		// Compute history from local scan (existing behavior).
-		report, err := scanFuncFor(assetLists(), d)(ctx, asset)
+		report, err := scanFuncFor(assetLists(), cache(), d)(ctx, asset)
 		if err != nil {
 			return err
 		}
@@ -651,35 +710,60 @@ type historyEntry struct {
 	Time       time.Time `json:"time"`
 }
 
+// openHistory returns the store serve records into: in memory when no path is
+// configured, file-backed when one is, and in both cases bounded by retention
+// observations per asset.
+func openHistory(path string, retention int) (*historystore.Store, error) {
+	if path == "" {
+		return historystore.NewWithRetention(retention), nil
+	}
+	store, err := historystore.OpenWithRetention(path, retention)
+	if err != nil {
+		return nil, fmt.Errorf("serve: history: %w", err)
+	}
+	return store, nil
+}
+
 func runServe(args []string, log *slog.Logger) error {
-	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	fs := newFlagSet("serve")
 	assetLists := assetListFlags(fs)
+	cache := cacheFlags(fs)
 	addr := fs.String("addr", ":8080", "listen address")
 	historyPath := fs.String("history", "",
 		"path to the observation history log (JSON Lines); empty keeps history in memory only")
+	historyRetention := fs.Int("history-retention", historystore.DefaultRetention,
+		"observations retained per asset (minimum 1)")
 	observeFile := fs.String("observe", "",
 		"path to asset list file (one CODE-ISSUER per line) for scheduled observation")
 	observeInterval := fs.Duration("observe-interval", 6*time.Hour,
 		"interval between scheduled scans of the asset list")
+	trustedProxies := fs.String("trusted-proxies", "",
+		"comma-separated CIDRs of trusted reverse proxies whose X-Forwarded-For headers are trusted")
 	if err := parseFlags(fs, args); err != nil {
 		return err
+	}
+	if *historyRetention < 1 {
+		return usagef("serve: -history-retention must be at least 1, got %d", *historyRetention)
 	}
 
 	// The server is where a list configuration matters most: every scan it
 	// serves consults the same configured lists, attributed the same way, and
 	// records them in the observation history like any other evidence.
 	srv := api.NewServer(log)
-	srv.Scanner = newScanner(assetLists())
-	var historyStore *historystore.Store
-	if *historyPath != "" {
-		store, err := historystore.Open(*historyPath)
+	if *trustedProxies != "" {
+		proxies, err := api.ParseTrustedProxies(*trustedProxies)
 		if err != nil {
-			return fmt.Errorf("serve: history: %w", err)
+			return fmt.Errorf("serve: trusted-proxies: %w", err)
 		}
-		srv.History = store
-		historyStore = store
-		defer func() { _ = historyStore.Close() }()
+		srv.TrustedProxies = proxies
 	}
+	srv.Scanner = newScanner(assetLists(), cache())
+	historyStore, err := openHistory(*historyPath, *historyRetention)
+	if err != nil {
+		return err
+	}
+	srv.History = historyStore
+	defer func() { _ = historyStore.Close() }()
 
 	httpSrv := &http.Server{
 		Addr:              *addr,

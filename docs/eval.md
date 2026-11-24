@@ -77,6 +77,13 @@ Corpus membership itself — the list of subject directories — lives in
 `subjectDirs` in [`internal/eval/corpus.go`](../internal/eval/corpus.go); a
 directory with metadata that is not in the list is not a labelled subject.
 
+Every directory under `internal/mechanics/testdata` must be either a labelled
+subject or an entry in `manifest.json`'s `regression_fixtures` list, which gives
+regression-only fixtures an explicit purpose. `internal/fixtures` test coverage
+rejects unaccounted directories, field drift between a subject's manifest entry
+and `metadata.json`, and missing provenance matches. This keeps the dataset
+index, eval labels, and human provenance index synchronized.
+
 Two other machine-readable records sit beside these files and are unchanged:
 `manifest.json` is the dataset card (licence, labels, one capture date per
 subject), and [`PROVENANCE.md`](../internal/mechanics/testdata/PROVENANCE.md)

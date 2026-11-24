@@ -44,6 +44,23 @@ var ErrInvalidAsset = errors.New("sac: invalid asset")
 
 var b32 = base32.StdEncoding.WithPadding(base32.NoPadding)
 
+// Passphrase maps standard network names ("testnet", "pubnet", "public", "futurenet", "standalone")
+// to their Stellar network passphrase. If network is not a recognized name, it is returned unchanged.
+func Passphrase(network string) string {
+	switch strings.ToLower(strings.TrimSpace(network)) {
+	case "testnet":
+		return "Test SDF Network ; September 2015"
+	case "pubnet", "public":
+		return "Public Global Stellar Network ; September 2015"
+	case "futurenet":
+		return "Test SDF Future Network ; October 2022"
+	case "standalone":
+		return "Standalone Network ; February 2017"
+	default:
+		return network
+	}
+}
+
 // Native returns the SAC address of the network's native asset (XLM).
 func Native(networkPassphrase string) string {
 	asset := make([]byte, 4)
@@ -135,6 +152,11 @@ func decodeStrkey(version byte, s string) ([]byte, error) {
 func IsContractAddress(s string) bool {
 	_, err := decodeStrkey(strkeyVersionContract, s)
 	return err == nil
+}
+
+// CRC16 is CRC16-XMODEM, the checksum strkey appends (polynomial 0x1021, init 0).
+func CRC16(data []byte) uint16 {
+	return crc16XModem(data)
 }
 
 // crc16XModem is the checksum strkey appends (polynomial 0x1021, init 0).

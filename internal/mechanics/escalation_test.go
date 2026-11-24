@@ -218,6 +218,7 @@ var buggedFinding = mechanics.Finding{
 
 func (buggedEscalationCheck) ID() string       { return buggedFinding.Check }
 func (buggedEscalationCheck) Describe() string { return buggedFinding.Title }
+func (buggedEscalationCheck) Inputs() []string { return nil }
 func (buggedEscalationCheck) Run(context.Context, *mechanics.Subject) (mechanics.Finding, error) {
 	return buggedFinding, nil
 }

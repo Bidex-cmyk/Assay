@@ -142,7 +142,7 @@ fn quorum_met_unavailable_and_invalid_threshold() {
     );
     assert_eq!(
         f.gate.quorum(&f.asset, &one, &0, &0),
-        Quorum::Unavailable(0)
+        Quorum::InvalidArguments
     );
 }
 
@@ -158,7 +158,7 @@ fn quorum_rejects_more_than_max_attestors() {
     assert_eq!(many.len(), MAX_ATTESTORS + 1);
     assert_eq!(
         f.gate.quorum(&f.asset, &many, &1, &0),
-        Quorum::Unavailable(0)
+        Quorum::InvalidArguments
     );
     assert!(!f.gate.is_safe_quorum(&f.asset, &many, &1, &4, &0));
 }

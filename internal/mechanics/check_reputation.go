@@ -109,6 +109,37 @@ func (ReputationCheck) Describe() string {
 		"list does not contain."
 }
 
+// Inputs implements Check.
+//
+// Issuer and Toml are read indirectly: DomainVerified consults them to caveat a
+// blocklist escalation, and HomeDomain keys the blocklist lookup when
+// BlockedSkipped was not recorded by the scan layer. Asset is read through the
+// same helper.
+func (ReputationCheck) Inputs() []string {
+	return []string{
+		"Asset",
+		"Issuer",
+		"Toml",
+		"Directory",
+		"DirectoryURL",
+		"DirectoryErr",
+		"DirectoryFetchedAt",
+		"DirectoryAttemptedAt",
+		"Blocked",
+		"BlockedURL",
+		"BlockedErr",
+		"BlockedFetchedAt",
+		"BlockedAttemptedAt",
+		"BlockedSkipped",
+		"ExpertAsset",
+		"ExpertAssetURL",
+		"ExpertAssetErr",
+		"ExpertAssetFetchedAt",
+		"ExpertAssetAttemptedAt",
+		"AssetLists",
+	}
+}
+
 // Run implements Check.
 func (c ReputationCheck) Run(_ context.Context, s *Subject) (Finding, error) {
 	f := Finding{

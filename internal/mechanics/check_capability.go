@@ -24,6 +24,19 @@ func (CapabilityCheck) Describe() string {
 		"the issuer is or whether they are likely to use the power."
 }
 
+// Inputs implements Check.
+func (CapabilityCheck) Inputs() []string {
+	return []string{
+		"Asset",
+		"Stat",
+		"StatFetchedAt",
+		"StatLedger",
+		"Issuer",
+		"IssuerFetchedAt",
+		"IssuerLedger",
+	}
+}
+
 // Run implements Check.
 //
 // Severity is the highest single capability present, not a sum. auth_revocable
@@ -51,6 +64,43 @@ func (c CapabilityCheck) Run(_ context.Context, s *Subject) (Finding, error) {
 		f.Severity = Unevaluated
 		f.Undetermined = true
 		f.Reasoning = "Asset not found on the ledger, so no issuer capability could be read: the capability axis is unevaluated, not clear."
+		return f, nil
+	}
+
+	assetImpossible := impossibleClawback(s.Stat.Flags)
+	accountImpossible := s.Issuer != nil && impossibleClawback(s.Issuer.Flags)
+	if assetImpossible || accountImpossible {
+		f.Severity = Unevaluated
+		f.Undetermined = true
+		f.Evidence = append(f.Evidence, Evidence{
+			Source:         "horizon",
+			URL:            horizonAssetURL(s.Asset),
+			Claim:          "issuer flags: " + flagSummary(s.Stat.Flags),
+			RetrievedAt:    NewCanonicalTime(s.StatFetchedAt),
+			LatestLedger:   s.statLedger(),
+			LedgerSequence: s.statLedger(),
+		})
+		if s.Issuer != nil {
+			f.Evidence = append(f.Evidence, Evidence{
+				Source:         "horizon/account",
+				URL:            horizonAccountURL(s.Asset.Issuer),
+				Claim:          "issuer account flags: " + flagSummary(s.Issuer.Flags),
+				RetrievedAt:    NewCanonicalTime(s.IssuerFetchedAt),
+				LatestLedger:   s.issuerLedger(),
+				LedgerSequence: s.issuerLedger(),
+			})
+		}
+
+		copies := make([]string, 0, 2)
+		if assetImpossible {
+			copies = append(copies, "the asset record has auth_clawback_enabled=true without auth_revocable")
+		}
+		if accountImpossible {
+			copies = append(copies, "the issuer account record has auth_clawback_enabled=true without auth_revocable")
+		}
+		f.Reasoning = "Impossible issuer flag combination: " + joinPowers(copies) +
+			". Under CAP-0035, auth_clawback_enabled requires auth_revocable. " +
+			"Each Horizon copy is cited below. This source fault makes issuer capability undetermined."
 		return f, nil
 	}
 
@@ -129,6 +179,10 @@ func (c CapabilityCheck) Run(_ context.Context, s *Subject) (Finding, error) {
 	f.Reasoning = b.String()
 
 	return f, nil
+}
+
+func impossibleClawback(flags horizon.Flags) bool {
+	return flags.AuthClawbackEnabled && !flags.AuthRevocable
 }
 
 // reconcileFlags resolves the two copies of the issuer's authorization flags

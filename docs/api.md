@@ -26,6 +26,44 @@ carry these headers.
 Exposed response headers: `X-Request-Id`, `X-Assay-Undetermined`,
 `Retry-After`.
 
+## Request Identifiers
+
+Every response carries an `X-Request-Id` header, and the same value is stamped
+on each log line the request produces, so one identifier pulls a whole request
+out of the logs. A caller may supply its own `X-Request-Id` to correlate across
+services. The server accepts it only when it is **1–128 bytes of
+`[A-Za-z0-9._:-]`**; an empty, over-long, or out-of-charset value is ignored and
+a fresh identifier (16 random bytes, hex-encoded) is generated instead.
+
+## Reverse Proxies and Rate Limiting
+
+In public deployments behind a reverse proxy (such as nginx, Caddy, or a cloud load balancer), `r.RemoteAddr` is the IP of the proxy peer. Without proxy awareness, all clients connecting through that proxy share a single rate-limiting bucket.
+
+To key rate limiters on the real client IP, pass `-trusted-proxies CIDR[,CIDR...]` to `assay serve`:
+
+```sh
+assay serve -addr 127.0.0.1:8080 -trusted-proxies 127.0.0.1/32,10.0.0.0/8
+```
+
+When the immediate connecting peer is within a configured trusted CIDR, Assay inspects `X-Forwarded-For` from right to left, skipping trusted intermediate hops, and keys the rate limiter on the first untrusted IP address. If the connecting peer is not in any trusted CIDR, `X-Forwarded-For` is ignored and the peer IP is used directly, preventing untrusted callers from forging their own rate limit bucket. The chosen client key is recorded in structured logs as `client_key`.
+
+### Reverse proxy configuration example (nginx)
+
+```nginx
+server {
+    listen 443 ssl http2;
+    server_name assay.example.com;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
 ## Error Bodies
 
 Every error response includes a stable `code` field alongside the
@@ -43,7 +81,7 @@ the message text.
 | --- | --- |
 | `missing_param` | A required query parameter was not supplied. |
 | `invalid_asset` | The `asset` parameter is not a valid `CODE-ISSUER` pair. |
-| `invalid_holder` | The `holder` or `account` parameter is not a valid `G…` address. |
+| `invalid_holder` | The `holder` or `account` parameter is neither a valid `G…` account nor a valid `M…` muxed account. |
 | `invalid_param` | Another parameter value is out of range or malformed. |
 | `asset_not_found` | The asset does not exist on the ledger. |
 | `account_not_found` | The account does not exist on the ledger. |
@@ -95,9 +133,9 @@ records one observation into the history store (see
 Parameters:
 
 - `asset` (required): asset code and issuer, e.g. `USDC-GA5Z...`.
-- `holder` (optional): a holder's `G...` address. Adds the holder-trustline
-  finding — whether the issuer can freeze or confiscate *this holder's*
-  balance — to the report.
+- `holder` (optional): a holder's `G...` account or `M...` muxed account.
+  Adds the holder-trustline finding — whether the issuer can freeze or
+  confiscate *this holder's* balance — to the report.
 
 The parameter accepts the same three spellings as the CLI — `CODE-ISSUER`,
 `CODE:ISSUER`, and a stellar.expert asset URL (percent-encoded) — and every
@@ -139,7 +177,8 @@ so a holder who opened theirs before the issuer enabled clawback is not
 exposed to it, even if the issuer's flag is set now. Issuer flags cannot tell
 those two holders apart; the holder's own trustline can.
 
-**Validation.** `holder` must be a Stellar account ID (`G…`, 56 characters).
+**Validation.** `holder` must be a Stellar account ID: a `G…` ed25519 account
+(56 characters), or an `M…` muxed account (69 characters) that decodes to one.
 Anything else is refused with `400 Bad Request` before any fetch:
 
 ```json
@@ -147,6 +186,16 @@ Anything else is refused with `400 Bad Request` before any fetch:
 ```
 
 An empty `holder=` is the same as leaving it out.
+
+**Muxed (`M…`) holders.** Exchanges hand depositors muxed addresses, and a
+muxed account is a naming convention rather than a ledger entry: it identifies a
+base `G…` account plus a 64-bit multiplexing id (SEP-23). Assay decodes the
+address, performs the trustline lookup against the base account, and records in
+the trustline evidence that the resolution happened — naming the original `M…`
+address, its id, and the `G…` account that was read. The severity is unaffected,
+because it was never holder-specific. A malformed `M…` (bad checksum, wrong
+length, contract address) is refused rather than resolved onto whatever account
+its bytes happen to spell.
 
 **What changes in the report.** The scan reads the holder's trustline from
 Horizon (`/accounts/{holder}`) and adds one finding, `check: "trustline"`
@@ -157,7 +206,7 @@ Horizon (`/accounts/{holder}`) and adds one finding, `check: "trustline"`
 | `is_clawback_enabled: true` | Evidence quoting both trustline flags, and mechanic `trustline_clawback_enabled` | `mechanics` gains `trustline_clawback_enabled` |
 | Not authorized (`is_authorized: false`) | Mechanic `trustline_deauthorized` | `mechanics` gains `trustline_deauthorized` |
 | Authorized, no clawback | Evidence quoting both flags, no mechanic; the reasoning explains CAP-0035 grandfathering | Unchanged |
-| The holder does not hold the asset | `undetermined: true`: there is no trustline to inspect | `undetermined: true`, `undetermined_checks` includes `trustline`, and the `X-Assay-Undetermined: true` header |
+| The holder does not hold the asset | Determined finding: no trustline exists, evidenced from `/accounts/{holder}` | Unchanged |
 | Horizon could not be reached for the holder | `undetermined: true`, with a `not retrievable:` evidence claim | As above |
 
 **`severity` never changes.** Severity is issuer-level and holder-independent
@@ -306,7 +355,10 @@ and an undetermined asset says nothing about any other asset on the page.
 
 Parameters:
 
-- `account` (required): the holder's `G...` address.
+- `account` (required): the holder's `G...` account, or an `M...` muxed
+  account that resolves to one. A muxed account's trustlines are read from its
+  base `G...` account, and each asset's trustline evidence records the
+  resolution.
 - `limit` (optional): page size, default `10`, clamped to a maximum of `50`.
   One page is up to `limit` full scans, which is why the bound exists.
 - `cursor` (optional): index of the first trustline to return, for the next

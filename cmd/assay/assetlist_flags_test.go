@@ -4,6 +4,8 @@ import (
 	"flag"
 	"reflect"
 	"testing"
+
+	"github.com/use-assay/assay/internal/scan"
 )
 
 // The flag is how a deployment says which lists are authoritative for it, so
@@ -38,9 +40,9 @@ func TestAssetListFlagParsesBothForms(t *testing.T) {
 	}
 }
 
-// Configuring lists is the only thing newScanner does beyond scan.New.
+// Configuring lists is the only thing newScanner adds to scan.NewWithOptions.
 func TestNewScannerCarriesAssetLists(t *testing.T) {
-	sc := newScanner([]string{"https://a.test/list.json"})
+	sc := newScanner([]string{"https://a.test/list.json"}, scan.DefaultOptions())
 	if len(sc.AssetListURLs) != 1 || sc.AssetListURLs[0] != "https://a.test/list.json" {
 		t.Errorf("AssetListURLs = %v", sc.AssetListURLs)
 	}
@@ -49,7 +51,7 @@ func TestNewScannerCarriesAssetLists(t *testing.T) {
 	}
 
 	// And with nothing configured, a scanner must not consult any list.
-	if lists := newScanner(nil).AssetListURLs; len(lists) != 0 {
+	if lists := newScanner(nil, scan.DefaultOptions()).AssetListURLs; len(lists) != 0 {
 		t.Errorf("a scanner with no lists configured holds %v", lists)
 	}
 }
