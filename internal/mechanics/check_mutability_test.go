@@ -75,7 +75,7 @@ func TestMutabilityReportsThreeStates(t *testing.T) {
 			name:       "not locked",
 			flags:      horizon.Flags{},
 			wantLocked: false,
-			wantWords:  []string{"not locked", "may add", "CAP-0035"},
+			wantWords:  []string{"not locked", "auth_revocable", "existing", "auth_clawback_enabled", "CAP-0035"},
 		},
 	}
 

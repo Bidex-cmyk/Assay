@@ -670,8 +670,8 @@ func TestCorpusReadsLabelsFromMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("corpus: %v", err)
 	}
-	if len(labels) != 12 {
-		t.Fatalf("corpus has %d subjects, want 12: a subject was added or removed without metadata", len(labels))
+	if len(labels) != 13 {
+		t.Fatalf("corpus has %d subjects, want 13: a subject was added or removed without metadata", len(labels))
 	}
 	byDir := make(map[string]eval.Label, len(labels))
 	for _, l := range labels {

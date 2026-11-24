@@ -54,24 +54,32 @@ func LoadSubject(fixturesDir, dir string) (*mechanics.Subject, error) {
 	if err := readJSON(filepath.Join(base, "asset.json"), &stat); err != nil {
 		return nil, err
 	}
+	s := &mechanics.Subject{
+		Asset:         mechanics.Asset{Code: stat.AssetCode, Issuer: stat.AssetIssuer},
+		Stat:          &stat,
+		StatFetchedAt: fixtureTime,
+		StatLedger:    stat.LatestLedger,
+		ScannedAt:     fixtureTime,
+	}
+
+	// account.json is required unless an account.404 marker is present, which
+	// signals that the issuer account has been merged (the live scanner would
+	// receive a 404 from /accounts and set IssuerMerged=true).
 	var acct horizon.Account
-	if err := readJSON(filepath.Join(base, "account.json"), &acct); err != nil {
+	acctPath := filepath.Join(base, "account.json")
+	if err := readJSON(acctPath, &acct); err == nil {
+		s.Issuer = &acct
+		s.IssuerFetchedAt = fixtureTime
+		s.IssuerLedger = acct.LatestLedger
+	} else if _, ok := readErrMarker(filepath.Join(base, "account.404")); ok {
+		s.IssuerMerged = true
+	} else {
 		return nil, err
 	}
 
-	s := &mechanics.Subject{
-		Asset:           mechanics.Asset{Code: stat.AssetCode, Issuer: stat.AssetIssuer},
-		Stat:            &stat,
-		StatFetchedAt:   fixtureTime,
-		StatLedger:      stat.LatestLedger,
-		Issuer:          &acct,
-		IssuerFetchedAt: fixtureTime,
-		IssuerLedger:    acct.LatestLedger,
-		ScannedAt:       fixtureTime,
-	}
-
-	if acct.HomeDomain != "" {
-		s.TomlURL = sep1.URLFor(acct.HomeDomain)
+	homeDomain := s.HomeDomain()
+	if homeDomain != "" {
+		s.TomlURL = sep1.URLFor(homeDomain)
 		s.TomlAttemptedAt = fixtureTime
 	}
 	if b, err := os.ReadFile(filepath.Join(base, "stellar.toml")); err == nil {
@@ -100,8 +108,8 @@ func LoadSubject(fixturesDir, dir string) (*mechanics.Subject, error) {
 		s.DirectoryErr = msg
 	}
 	s.BlockedURL = "https://api.stellar.expert/explorer/directory/blocked-domains/"
-	if acct.HomeDomain != "" {
-		s.BlockedURL += acct.HomeDomain
+	if homeDomain != "" {
+		s.BlockedURL += homeDomain
 	} else {
 		// No domain to key the blocklist on: mirror the live scanner so a
 		// no-home_domain fixture exercises the same path production does.

@@ -129,6 +129,78 @@ func TestUnknownPathIs404(t *testing.T) {
 	}
 }
 
+// TestUnknownAPIPathIsJSON404 pins the API contract for a mistyped path: an
+// API client decodes error bodies as JSON, so an unknown /api/ path must not
+// fall through to the UI's http.NotFound plain text.
+func TestUnknownAPIPathIsJSON404(t *testing.T) {
+	rec := httptest.NewRecorder()
+	newTestServer().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/unknown", nil))
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
+		t.Errorf("Content-Type = %q, want application/json", got)
+	}
+	var body struct {
+		Error string `json:"error"`
+		Code  string `json:"code"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Error == "" {
+		t.Error("error body was empty; an API client must be able to tell why it failed")
+	}
+	if body.Code != "not_found" {
+		t.Errorf("code = %q, want not_found", body.Code)
+	}
+}
+
+// TestWrongMethodIsJSON405 pins the answer to a method an API path does not
+// serve: JSON, with Allow naming the method it does.
+func TestWrongMethodIsJSON405(t *testing.T) {
+	rec := httptest.NewRecorder()
+	newTestServer().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/v1/scan", nil))
+
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", rec.Code)
+	}
+	if got := rec.Header().Get("Allow"); got != http.MethodGet {
+		t.Errorf("Allow = %q, want %q", got, http.MethodGet)
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
+		t.Errorf("Content-Type = %q, want application/json", got)
+	}
+	var body struct {
+		Error string `json:"error"`
+		Code  string `json:"code"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Code != "method_not_allowed" {
+		t.Errorf("code = %q, want method_not_allowed", body.Code)
+	}
+}
+
+// TestNonAPIPathKeepsPlainText404 holds the line between the API and the UI:
+// only /api/ responses are JSON, so the UI's existing 404 is untouched.
+func TestNonAPIPathKeepsPlainText404(t *testing.T) {
+	rec := httptest.NewRecorder()
+	newTestServer().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/nope", nil))
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/plain") {
+		t.Errorf("Content-Type = %q, want text/plain", got)
+	}
+	if !strings.Contains(rec.Body.String(), "404 page not found") {
+		t.Errorf("body = %q, want the standard plain-text 404", rec.Body.String())
+	}
+}
+
 func TestScanUndeterminedHeaderContract(t *testing.T) {
 	// A scan on a nonexistent or unreachable asset returns undetermined or fails;
 	// we can verify the header contract is set properly on responses.

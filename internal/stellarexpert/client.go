@@ -204,6 +204,31 @@ func BypassCache() LookupOption {
 	return func(o *lookupOptions) { o.bypass = true }
 }
 
+// maxAgeKey is the context key carrying a caller's freshness bound.
+type maxAgeKey struct{}
+
+// WithMaxAge returns a context that bounds how old a cached reputation answer
+// may be when a lookup made with it reuses one. An answer fetched max or more
+// ago is not reused: the source is asked again and the fresh answer replaces
+// the cached one. A zero max means "do not reuse": every lookup re-fetches. A
+// negative max is treated as zero.
+//
+// It only tightens the client's own TTL; it can never make a cached answer live
+// longer than DirectoryTTL or BlocklistTTL allow. It applies to the directory
+// and blocklist lookups only. Ledger reads are never cached and are unaffected.
+func WithMaxAge(ctx context.Context, max time.Duration) context.Context {
+	if max < 0 {
+		max = 0
+	}
+	return context.WithValue(ctx, maxAgeKey{}, max)
+}
+
+// maxAgeFrom returns the freshness bound carried by ctx, if any.
+func maxAgeFrom(ctx context.Context) (time.Duration, bool) {
+	max, ok := ctx.Value(maxAgeKey{}).(time.Duration)
+	return max, ok
+}
+
 // stamped is the minimal contract a cached answer satisfies: it can report the
 // instant its data was fetched, which the cache needs to measure expiry from
 // the data's age rather than from its insertion.
@@ -321,9 +346,24 @@ func (c *Client) BlockedDomainURL(domain string) string {
 	return c.BaseURL + "/explorer/directory/blocked-domains/" + url.PathEscape(domain)
 }
 
-// AssetURL returns the public URL for an asset metadata lookup.
+// AssetURL returns the pubnet URL for an asset metadata lookup.
 func (c *Client) AssetURL(code, issuer string) string {
 	return c.BaseURL + "/explorer/public/asset/" + url.PathEscape(code+"-"+issuer)
+}
+
+// testnetPassphrase is the SDF testnet network passphrase, used to pick the
+// correct StellarExpert explorer path without importing the horizon package.
+const testnetPassphrase = "Test SDF Network ; September 2015"
+
+// AssetURLForNetwork returns the StellarExpert URL for asset metadata on the
+// network identified by its passphrase. It uses the testnet path for the SDF
+// testnet and the public path for every other passphrase.
+func (c *Client) AssetURLForNetwork(code, issuer, networkPassphrase string) string {
+	seg := "public"
+	if networkPassphrase == testnetPassphrase {
+		seg = "testnet"
+	}
+	return c.BaseURL + "/explorer/" + seg + "/asset/" + url.PathEscape(code+"-"+issuer)
 }
 
 // Directory looks up an address in the curated directory.
@@ -337,7 +377,7 @@ func (c *Client) AssetURL(code, issuer string) string {
 // like any other answer.
 func (c *Client) Directory(ctx context.Context, address string, opts ...LookupOption) (Answer[DirectoryEntry], error) {
 	target := c.DirectoryURL(address)
-	a, hit, err := lookup(c.directory, target, opts, func() (Answer[DirectoryEntry], error) {
+	a, hit, err := lookup(ctx, c.now, c.directory, target, opts, func() (Answer[DirectoryEntry], error) {
 		var e DirectoryEntry
 		found, err := c.get(ctx, target, &e)
 		if err != nil {
@@ -374,7 +414,7 @@ func (c *Client) Directory(ctx context.Context, address string, opts ...LookupOp
 // domain that has since been listed keep reading as clean.
 func (c *Client) BlockedDomain(ctx context.Context, domain string, opts ...LookupOption) (Answer[BlockedDomain], error) {
 	target := c.BlockedDomainURL(domain)
-	a, hit, err := lookup(c.blocklist, target, opts, func() (Answer[BlockedDomain], error) {
+	a, hit, err := lookup(ctx, c.now, c.blocklist, target, opts, func() (Answer[BlockedDomain], error) {
 		var b BlockedDomain
 		found, err := c.get(ctx, target, &b)
 		if err != nil {
@@ -405,12 +445,29 @@ func (c *Client) BlockedDomain(ctx context.Context, domain string, opts ...Looku
 // GetOrFetch provides single-flight: concurrent lookups for the same key share
 // one upstream request. Waiters receive the same result and the same
 // FetchedAt. Errors are shared but not cached.
-func lookup[T stamped](c *cache.Cache[T], key string, opts []LookupOption, fetch func() (T, error)) (T, bool, error) {
+//
+// A caller's freshness bound (WithMaxAge) is applied on top of the cache's own
+// TTL: a cached answer is reused only while it is younger than both. When the
+// cache cannot satisfy the bound, the lookup fetches directly, outside
+// single-flight, and stores the fresh answer. It must not join an in-flight
+// fetch: that fetch began before this request and its answer could be older
+// than the bound, which for max_age_secs=0 would hand back exactly the reuse
+// the caller refused.
+func lookup[T stamped](ctx context.Context, now func() time.Time, c *cache.Cache[T], key string, opts []LookupOption, fetch func() (T, error)) (T, bool, error) {
 	var lo lookupOptions
 	for _, opt := range opts {
 		opt(&lo)
 	}
-	if lo.bypass {
+	bypass := lo.bypass
+	if !bypass {
+		if _, bounded := maxAgeFrom(ctx); bounded {
+			if e, ok := c.Get(key); ok && withinMaxAge(ctx, now, e.FetchedAt) {
+				return e.Value, true, nil
+			}
+			bypass = true
+		}
+	}
+	if bypass {
 		val, err := fetch()
 		if err != nil {
 			var zero T
@@ -433,6 +490,18 @@ func lookup[T stamped](c *cache.Cache[T], key string, opts []LookupOption, fetch
 		return zero, false, fmt.Errorf("lookup: %w", err)
 	}
 	return entry.Value, fromCache, nil
+}
+
+// withinMaxAge reports whether an answer fetched at fetchedAt may be reused
+// under the caller's freshness bound. With no bound it always may; with a
+// bound, it may only while strictly younger than it, so a bound of zero never
+// reuses anything.
+func withinMaxAge(ctx context.Context, now func() time.Time, fetchedAt time.Time) bool {
+	max, ok := maxAgeFrom(ctx)
+	if !ok {
+		return true
+	}
+	return now().Sub(fetchedAt) < max
 }
 
 // Asset looks up StellarExpert's asset-level metadata and rating.

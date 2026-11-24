@@ -6,10 +6,12 @@ import (
 	"embed"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +19,7 @@ import (
 	"github.com/use-assay/assay/internal/horizon"
 	"github.com/use-assay/assay/internal/mechanics"
 	"github.com/use-assay/assay/internal/scan"
+	"github.com/use-assay/assay/internal/stellarexpert"
 	"github.com/use-assay/assay/internal/temporal"
 )
 
@@ -86,6 +89,7 @@ var Routes = []string{
 	"GET /api/v1/history",
 	"GET /api/v1/events",
 	"GET /api/v1/exposure",
+	"GET /api/v1/attestation",
 	"GET /metrics",
 	"GET /healthz",
 	"GET /readyz",
@@ -129,11 +133,12 @@ func (s *Server) Handler() http.Handler {
 	}
 
 	handlers := map[string]http.HandlerFunc{
-		"GET /api/v1/scan":     scanHandler,
-		"GET /api/v1/history":  s.handleHistory,
-		"GET /api/v1/events":   s.handleEvents,
-		"GET /api/v1/exposure": s.withExposureLimit(limiter, s.handleExposure),
-		"GET /metrics":         s.handleMetrics,
+		"GET /api/v1/scan":        scanHandler,
+		"GET /api/v1/history":     s.handleHistory,
+		"GET /api/v1/events":      s.handleEvents,
+		"GET /api/v1/exposure":    s.withExposureLimit(limiter, s.handleExposure),
+		"GET /api/v1/attestation": s.handleAttestation,
+		"GET /metrics":            s.handleMetrics,
 		"GET /healthz": func(w http.ResponseWriter, _ *http.Request) {
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte("ok"))
@@ -151,7 +156,87 @@ func (s *Server) Handler() http.Handler {
 		}
 		mux.HandleFunc(route, handler)
 	}
-	return s.withObservability(s.withCORS(mux))
+	allowed := make(map[string]string, len(Routes))
+	for _, route := range Routes {
+		if method, path, ok := strings.Cut(route, " "); ok {
+			allowed[path] = method
+		}
+	}
+	return s.withObservability(s.withCORS(s.withAPIErrors(mux, allowed)))
+}
+
+// withAPIErrors rewrites the plain-text 404 and 405 answers the router and the
+// UI fallback produce for /api/ paths into the JSON errorBody the rest of the
+// API uses. A typo in a path, or the wrong method on a real one, reaches no
+// handler, so without this pass an API client gets text/plain. Non-API paths
+// are passed through untouched, keeping the UI's own 404 as it was.
+func (s *Server) withAPIErrors(next http.Handler, allowed map[string]string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/api/") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		ew := &apiErrorWriter{ResponseWriter: w}
+		next.ServeHTTP(ew, r)
+		if !ew.rewrite {
+			return
+		}
+		if ew.status == http.StatusMethodNotAllowed {
+			// The router advertises HEAD alongside GET because a GET pattern
+			// serves it implicitly. The API documents GET, so name that.
+			allow := allowed[r.URL.Path]
+			if allow == "" {
+				allow = w.Header().Get("Allow")
+			}
+			w.Header().Set("Allow", allow)
+			writeJSON(w, ew.status, apiErr(codeMethodNotAllowed, "method "+r.Method+" not allowed; allowed: "+allow))
+			return
+		}
+		writeJSON(w, ew.status, apiErr(codeNotFound, "unknown API path: "+r.URL.Path))
+	})
+}
+
+// apiErrorWriter decides, at WriteHeader time, whether the response is one the
+// router generated that should be rewritten. Rewriting depends on the body not
+// already being JSON: handler errors (asset_not_found, account_not_found) set
+// their JSON content type first and are left alone.
+type apiErrorWriter struct {
+	http.ResponseWriter
+	rewrite bool
+	status  int
+}
+
+func (w *apiErrorWriter) WriteHeader(status int) {
+	if w.rewrite {
+		return
+	}
+	if status == http.StatusNotFound || status == http.StatusMethodNotAllowed {
+		if !strings.HasPrefix(w.Header().Get("Content-Type"), "application/json") {
+			w.rewrite = true
+			w.status = status
+			return
+		}
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *apiErrorWriter) Write(p []byte) (int, error) {
+	if w.rewrite {
+		return len(p), nil
+	}
+	n, err := w.ResponseWriter.Write(p)
+	if err != nil {
+		return n, fmt.Errorf("api: write response: %w", err)
+	}
+	return n, nil
+}
+
+// Flush keeps the SSE handler's http.Flusher assertion working through the
+// wrapper; without it the events endpoint would answer 500.
+func (w *apiErrorWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
@@ -171,15 +256,22 @@ func (s *Server) handleUI(w http.ResponseWriter, r *http.Request) {
 // Error codes. These are the stable identifiers API consumers should branch on;
 // the human-readable error message may change, the code will not.
 const (
-	codeAssetNotFound   = "asset_not_found"
-	codeAccountNotFound = "account_not_found"
-	codeInvalidAsset    = "invalid_asset"
-	codeInvalidHolder   = "invalid_holder"
-	codeInvalidParam    = "invalid_param"
-	codeMissingParam    = "missing_param"
-	codeUpstreamUnavail = "upstream_unavailable"
-	codeRateLimited     = "rate_limited"
+	codeNotFound         = "not_found"
+	codeMethodNotAllowed = "method_not_allowed"
+	codeAssetNotFound    = "asset_not_found"
+	codeAccountNotFound  = "account_not_found"
+	codeInvalidAsset     = "invalid_asset"
+	codeInvalidHolder    = "invalid_holder"
+	codeInvalidParam     = "invalid_param"
+	codeMissingParam     = "missing_param"
+	codeUpstreamUnavail  = "upstream_unavailable"
+	codeRateLimited      = "rate_limited"
 )
+
+// maxAgeSecsLimit is the largest max_age_secs accepted. It keeps the seconds to
+// time.Duration conversion from overflowing; any larger bound is, in effect,
+// "no bound" beyond the cache's own TTL, so nothing legitimate is lost.
+const maxAgeSecsLimit = 1 << 31
 
 type errorBody struct {
 	Error string `json:"error"`
@@ -254,16 +346,24 @@ func (s *Server) handleScan(w http.ResponseWriter, r *http.Request) {
 	if maxAgeParam == "" {
 		maxAgeParam = r.URL.Query().Get("max_age")
 	}
+	var maxAge *time.Duration
 	if maxAgeParam != "" {
 		secs, err := strconv.ParseInt(maxAgeParam, 10, 64)
-		if err != nil || secs < 0 {
+		if err != nil || secs < 0 || secs > maxAgeSecsLimit {
 			writeJSON(w, http.StatusBadRequest, apiErr(codeInvalidParam, "invalid max_age_secs"))
 			return
 		}
+		d := time.Duration(secs) * time.Second
+		maxAge = &d
 	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
+	if maxAge != nil {
+		// The caller's upper bound on reused reputation answers. It reaches
+		// only the StellarExpert lookups; ledger reads are never cached.
+		ctx = stellarexpert.WithMaxAge(ctx, *maxAge)
+	}
 
 	report, err := s.Scanner.ScanWithHolder(ctx, asset, holder)
 

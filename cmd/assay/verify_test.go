@@ -370,6 +370,31 @@ func TestVerifyMatchesAnOlderEncoding(t *testing.T) {
 	}
 }
 
+// TestVerifyPreimageVersionAbsent asserts that the JSON output for a chain
+// side never includes "preimage_version", since the registry does not store it
+// and a zero default would be presented as a fact (issue #558).
+func TestVerifyPreimageVersionAbsent(t *testing.T) {
+	_, params := attestableReport(t, nil)
+	res := &VerifyResult{
+		Asset:   verifyTestAssetCode + "-" + verifyTestAssetIssuer,
+		Outcome: outcomeMismatch,
+		Fields:  []string{"severity"},
+		Chain: &OnChainSafety{
+			Severity:     params.Severity + 1,
+			Flags:        params.Flags,
+			EvidenceHash: params.EvidenceHash,
+			AttestedAt:   verifyTableTime.Unix(),
+		},
+	}
+	var buf bytes.Buffer
+	if err := writeVerifyResult(&buf, res, true); err != nil {
+		t.Fatalf("writeVerifyResult: %v", err)
+	}
+	if strings.Contains(buf.String(), "preimage_version") {
+		t.Errorf("JSON output must not contain preimage_version; got:\n%s", buf.String())
+	}
+}
+
 func TestVerifyDerivesSACInProcessPinned(t *testing.T) {
 	// Pinned AQUA vectors from internal/sac/sac_test.go
 	const code = "AQUA"

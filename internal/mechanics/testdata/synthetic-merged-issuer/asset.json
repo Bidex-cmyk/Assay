@@ -1,0 +1,27 @@
+{
+  "_links": {
+    "toml": {
+      "href": ""
+    }
+  },
+  "asset_type": "credit_alphanum4",
+  "asset_code": "MRGE",
+  "asset_issuer": "GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
+  "paging_token": "MRGE_GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA_credit_alphanum4",
+  "accounts": {
+    "authorized": 1,
+    "authorized_to_maintain_liabilities": 0,
+    "unauthorized": 0
+  },
+  "balances": {
+    "authorized": "1000.0000000",
+    "authorized_to_maintain_liabilities": "0.0000000",
+    "unauthorized": "0.0000000"
+  },
+  "flags": {
+    "auth_required": false,
+    "auth_revocable": false,
+    "auth_immutable": false,
+    "auth_clawback_enabled": false
+  }
+}

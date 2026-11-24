@@ -210,6 +210,10 @@ type Finding struct {
 	// evidence of abuse does not become less true when a second source is
 	// down.
 	Undetermined bool `json:"undetermined"`
+	// UndeterminedSource names the source (or comma-joined sources) that caused
+	// this finding to be undetermined. Set explicitly by each check at the point
+	// where Undetermined is set, so attribution never depends on parsing Reasoning.
+	UndeterminedSource string `json:"undetermined_source,omitempty"`
 	// UndeterminedBySource records which source caused this finding to be
 	// undetermined. This distinguishes a source failing (e.g. StellarExpert
 	// unreachable) from a source being skipped (e.g. home_domain empty).
@@ -246,7 +250,12 @@ type Finding struct {
 // twenty seconds after the Horizon one must not report Horizon's instant.
 type Subject struct {
 	Asset Asset
-	Stat  *horizon.AssetStat
+	// HorizonURL is the base URL of the Horizon instance that answered this
+	// scan (e.g. "https://horizon.stellar.org" or "https://horizon-testnet.stellar.org").
+	// When empty, Horizon evidence URLs fall back to the DefaultURL for the
+	// Subject's Network.
+	HorizonURL string
+	Stat       *horizon.AssetStat
 	// StatFetchedAt is when Horizon answered the /assets lookup.
 	StatFetchedAt time.Time
 	// StatLedger is the ledger sequence Horizon reported for the /assets query.
@@ -256,6 +265,11 @@ type Subject struct {
 	IssuerFetchedAt time.Time
 	// IssuerLedger is the ledger sequence Horizon reported for the /accounts query.
 	IssuerLedger int64
+	// IssuerMerged is set when the issuer account returned 404 from Horizon's
+	// /accounts endpoint, indicating the account has been merged. The asset
+	// record (Stat) may still exist. The capability check is undetermined in
+	// this case because the second copy of flags is unavailable.
+	IssuerMerged bool
 
 	// Toml is the issuer's stellar.toml if it resolved. TomlErr records why it
 	// did not, and is reported verbatim rather than being smoothed over.
@@ -800,10 +814,13 @@ func (e *Engine) Run(ctx context.Context, s *Subject) (*Report, error) {
 			rep.UndeterminedChecks = append(rep.UndeterminedChecks, f.Check)
 			undeterminedCount++
 
-			// Determine the source that caused the undetermined status.
-			// Priority: 1) evidence source, 2) reasoning keywords, 3) subject fields.
-			source := determineUndeterminedSource(f, s)
-			rep.UndeterminedBySource[source]++
+			src := f.UndeterminedSource
+			if src == "" {
+				src = "unknown"
+			}
+			for _, s := range strings.Split(src, ",") {
+				rep.UndeterminedBySource[strings.TrimSpace(s)]++
+			}
 		}
 
 		if f.Accountability != nil {
@@ -859,56 +876,4 @@ func (e *Engine) Run(ctx context.Context, s *Subject) (*Report, error) {
 	})
 	sort.Strings(rep.CheckSet)
 	return rep, nil
-}
-
-// determineUndeterminedSource figures out which source caused a check to be
-// undetermined. It prioritizes: 1) the finding's evidence source, 2) keywords
-// in the reasoning, 3) subject-level failure fields.
-func determineUndeterminedSource(f Finding, s *Subject) string {
-	// 1) Check the finding's evidence for a source attribution.
-	if len(f.Evidence) > 0 {
-		for _, e := range f.Evidence {
-			if e.Source != "" {
-				return e.Source
-			}
-		}
-	}
-
-	// 2) Check reasoning keywords for source hints.
-	low := strings.ToLower(f.Reasoning)
-	if strings.Contains(low, "horizon") || strings.Contains(low, "asset not found") {
-		return "horizon"
-	}
-	if strings.Contains(low, "stellar.expert/directory") || strings.Contains(low, "curated directory") {
-		return "stellar.expert/directory"
-	}
-	if strings.Contains(low, "stellar.expert/blocked") || strings.Contains(low, "blocked-domains") {
-		return "stellar.expert/blocked-domains"
-	}
-	if strings.Contains(low, "home_domain") || strings.Contains(low, "stellar.toml") {
-		return "stellar.toml"
-	}
-	if strings.Contains(low, "trustline") {
-		return "horizon/trustline"
-	}
-
-	// 3) Fall back to subject-level failure fields.
-	if s.Stat == nil {
-		return "horizon"
-	}
-	if s.DirectoryErr != "" {
-		return "stellar.expert/directory"
-	}
-	if s.BlockedErr != "" {
-		return "stellar.expert/blocked-domains"
-	}
-	if s.TomlErr != "" {
-		return "stellar.toml"
-	}
-	if s.HolderTrustlineErr != "" || s.HolderTrustline == nil {
-		return "horizon/trustline"
-	}
-
-	// 4) Last resort: generic label.
-	return "unknown"
 }

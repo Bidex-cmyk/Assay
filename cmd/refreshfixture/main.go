@@ -12,6 +12,8 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"time"
 
@@ -19,36 +21,49 @@ import (
 )
 
 func main() {
-	subject := flag.String("subject", "", "fixture directory to re-capture, e.g. aqua-clear-verified")
-	root := flag.String("root", "internal/mechanics/testdata", "fixture root holding PROVENANCE.md and manifest.json")
-	dryRun := flag.Bool("dry-run", false, "show the diff without writing")
-	flag.Parse()
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, &fixtures.Refresher{Client: http.DefaultClient}))
+}
+
+type refresher interface {
+	Refresh(context.Context, string, string, bool) (*fixtures.Result, error)
+}
+
+func run(args []string, stdout, stderr io.Writer, r refresher) int {
+	fs := flag.NewFlagSet("refreshfixture", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	subject := fs.String("subject", "", "fixture directory to re-capture, e.g. aqua-clear-verified")
+	root := fs.String("root", "internal/mechanics/testdata", "fixture root holding PROVENANCE.md and manifest.json")
+	dryRun := fs.Bool("dry-run", false, "show the diff without writing")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
 
 	if *subject == "" {
-		fmt.Fprintln(os.Stderr, "usage: refresh-fixture -subject <dir> [-root <dir>] [-dry-run]")
-		os.Exit(2)
+		_, _ = fmt.Fprintln(stderr, "usage: refresh-fixture -subject <dir> [-root <dir>] [-dry-run]")
+		return 2
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	r := &fixtures.Refresher{}
-	res, err := r.Refresh(ctx, *root, *subject, !*dryRun)
+	ref := r
+	res, err := ref.Refresh(ctx, *root, *subject, !*dryRun)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "refresh %s: %v\n", *subject, err)
-		os.Exit(1)
+		_, _ = fmt.Fprintf(stderr, "refresh %s: %v\n", *subject, err)
+		return 1
 	}
 
 	if len(res.Changed) == 0 {
-		fmt.Printf("%s: no change; the fixtures match the live sources\n", *subject)
-		return
+		_, _ = fmt.Fprintf(stdout, "%s: no change; the fixtures match the live sources\n", *subject)
+		return 0
 	}
 	for _, c := range res.Changed {
-		fmt.Print(fixtures.Unified(c.File, c.Old, c.New))
+		_, _ = fmt.Fprint(stdout, fixtures.Unified(c.File, c.Old, c.New))
 	}
 	if *dryRun {
-		fmt.Printf("\n%s: %d file(s) would change (dry run; nothing written)\n", *subject, len(res.Changed))
-		return
+		_, _ = fmt.Fprintf(stdout, "\n%s: %d file(s) would change (dry run; nothing written)\n", *subject, len(res.Changed))
+		return 0
 	}
-	fmt.Printf("\n%s: %d file(s) updated and capture date refreshed\n", *subject, len(res.Changed))
+	_, _ = fmt.Fprintf(stdout, "\n%s: %d file(s) updated and capture date refreshed\n", *subject, len(res.Changed))
+	return 0
 }

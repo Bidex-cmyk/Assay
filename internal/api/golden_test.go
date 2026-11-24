@@ -19,6 +19,7 @@ import (
 
 	"github.com/use-assay/assay/internal/api"
 	"github.com/use-assay/assay/internal/history"
+	"github.com/use-assay/assay/internal/horizon"
 	"github.com/use-assay/assay/internal/scan"
 	"github.com/use-assay/assay/internal/stellarexpert"
 )
@@ -234,7 +235,8 @@ func goldenScanHandler(t *testing.T) http.Handler {
 
 	sc := scan.New()
 	sc.Now = now
-	sc.Horizon.BaseURL = horizonSrv.URL
+	sc.Horizon.BaseURL = horizon.DefaultURL
+	sc.Horizon.HTTP.Transport = &goldenSingleHostTransport{host: strings.TrimPrefix(horizonSrv.URL, "http://")}
 	// The StellarExpert client stamps its own answers with its own clock
 	// (Answer.FetchedAt), which lands in Evidence.RetrievedAt — so the
 	// golden render pins the client's clock too, not only the scanner's.

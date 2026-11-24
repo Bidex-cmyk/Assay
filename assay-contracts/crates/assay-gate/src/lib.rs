@@ -145,6 +145,12 @@ pub const CAPABILITY_MASK: u32 = MECH_AUTH_REQUIRED | MECH_AUTH_REVOCABLE | MECH
 /// this mask has `severity >= 3` by construction.
 pub const CONFISCATION_MASK: u32 = MECH_CLAWBACK_ENABLED;
 
+// The registry's `SEVERITY_HIGH`. The confiscation invariant is stated in
+// terms of the stored severity, not a caller's ceiling, so the comparison
+// needs the level by name. Kept private: this crate exports the mechanics ABI,
+// not the severity ladder.
+const SEVERITY_HIGH: u32 = 3;
+
 /// The maximum number of attestors accepted for quorum evaluation.
 pub const MAX_ATTESTORS: u32 = 16;
 
@@ -154,21 +160,26 @@ pub const MAX_ATTESTORS: u32 = 16;
 
 /// Why a policy refused an attestation.
 ///
-/// The variants are the same three refusals the example gate reports as
-/// contract errors, so a caller maps them one-to-one and a caller's client
-/// can still tell "the issuer can take it" from "this attestation is stale".
+/// The variants are the same refusals the example gate reports as contract
+/// errors, so a caller maps them one-to-one and a caller's client can still
+/// tell "the issuer can take it" from "this attestation is stale".
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PolicyViolation {
     /// The newest attestation is older than the configured freshness policy.
     AttestationStale,
     /// Severity exceeds the configured policy ceiling.
     SeverityTooHigh,
+    /// The stored attestation is internally inconsistent: it carries the
+    /// clawback capability below `SEVERITY_HIGH`. The registry refuses to
+    /// write this, but a gate must not depend on the writer having been
+    /// correct.
+    Inconsistent,
     /// The issuer holds a power in the configured refused-mechanics mask.
     IssuerCanTakeIt,
 }
 
-/// Checks one attestation against a severity ceiling, a freshness window and
-/// a refused-mechanics mask, in that order.
+/// Checks one attestation against a freshness window, a severity ceiling, the
+/// confiscation invariant and a refused-mechanics mask, in that order.
 ///
 /// This is the whole judgment half of a gate, in one place, so an integrator
 /// cannot assemble it wrong by omission. Both axes are checked because they
@@ -178,15 +189,22 @@ pub enum PolicyViolation {
 /// cannot custody (a freeze-capable issuer under a ceiling of 2). See
 /// `docs/integrating.md` for the reachable examples.
 ///
+/// The confiscation invariant is re-checked here regardless of the caller's
+/// mask: an attestation carrying clawback below `SEVERITY_HIGH` is malformed,
+/// and a gate must not depend on the writer having been correct. The registry
+/// rejects such a write; this refuses one if it is stored anyway.
+///
 /// `now` is the current ledger timestamp (`env.ledger().timestamp()`), and
 /// staleness is measured with `saturating_sub` so a ledger timestamp earlier
 /// than `attested_at` reads as fresh rather than wrapping.
 ///
-/// Note that `max_age_secs == 0` does NOT disable the freshness check here,
-/// even though it does in the registry's own `is_safe`: a gate that trusted
-/// an attestation of any age because someone constructed it with `0` would
-/// fail open. With `0`, only an attestation from the current ledger second
-/// passes.
+/// Deliberate difference: `max_age_secs == 0` is a zero-second window here,
+/// so only an attestation whose computed age is zero passes. Normally this is
+/// an attestation from the current ledger second; a future timestamp also has
+/// age zero because age uses `saturating_sub`. The registry uses zero to
+/// disable freshness checks for compatibility with its deployed interface.
+/// Do not pass zero between these APIs expecting the same policy; see
+/// `docs/contract-interface.md` for the decision and rationale.
 pub fn check_policy(
     safety: &Safety,
     now: u64,
@@ -199,6 +217,9 @@ pub fn check_policy(
     }
     if safety.severity > max_severity {
         return Err(PolicyViolation::SeverityTooHigh);
+    }
+    if safety.flags & CONFISCATION_MASK != 0 && safety.severity < SEVERITY_HIGH {
+        return Err(PolicyViolation::Inconsistent);
     }
     if safety.flags & refused_mechanics != 0 {
         return Err(PolicyViolation::IssuerCanTakeIt);
@@ -263,6 +284,41 @@ mod test {
         );
     }
 
+    // The malformed shape the registry refuses to write but a gate may still
+    // read: clawback below SEVERITY_HIGH. The caller's mask must not be what
+    // catches it, so this pins the invariant against an empty mask, a mask
+    // without clawback, and the default mask that does include it.
+    #[test]
+    fn inconsistent_attestation_is_refused_whatever_the_mask() {
+        let s = attestation(2, MECH_CLAWBACK_ENABLED, NOW - 60);
+
+        // Ceiling 4 would admit severity 2; the mask omits clawback.
+        assert_eq!(
+            check_policy(&s, NOW, 4, MAX_AGE, MECH_AUTH_REVOCABLE),
+            Err(PolicyViolation::Inconsistent)
+        );
+        // An empty mask refuses nothing, and must still not admit it.
+        assert_eq!(
+            check_policy(&s, NOW, 4, MAX_AGE, 0),
+            Err(PolicyViolation::Inconsistent)
+        );
+        // The default policy's mask includes clawback; the malformed
+        // attestation is reported as such rather than as a mask match.
+        assert_eq!(
+            check_policy(&s, NOW, MAX_SEVERITY, MAX_AGE, REFUSED),
+            Err(PolicyViolation::Inconsistent)
+        );
+    }
+
+    // A confiscation-capable attestation at SEVERITY_HIGH is consistent, not
+    // malformed. It is admitted when the ceiling and the mask allow it, so the
+    // new check does not refuse every clawback bit.
+    #[test]
+    fn confiscation_at_high_is_consistent() {
+        let s = attestation(SEVERITY_HIGH, MECH_CLAWBACK_ENABLED, NOW - 60);
+        assert_eq!(check_policy(&s, NOW, SEVERITY_HIGH, MAX_AGE, 0), Ok(()));
+    }
+
     #[test]
     fn stale_attestation_is_refused_before_anything_else() {
         let s = attestation(4, MECH_CLAWBACK_ENABLED, NOW - MAX_AGE - 1);
@@ -283,10 +339,11 @@ mod test {
         );
     }
 
-    // A zero freshness window fails closed, unlike the registry's is_safe:
-    // only an attestation from the current ledger second passes.
+    // Zero is a zero-second window for this helper: the current ledger second
+    // passes, while an older attestation is rejected. The registry's APIs
+    // intentionally use zero to disable freshness; both meanings are pinned.
     #[test]
-    fn zero_max_age_refuses_an_older_attestation() {
+    fn zero_max_age_is_a_zero_second_window() {
         let fresh = attestation(0, 0, NOW);
         assert_eq!(check_policy(&fresh, NOW, MAX_SEVERITY, 0, REFUSED), Ok(()));
         let older = attestation(0, 0, NOW - 1);

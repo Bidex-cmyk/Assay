@@ -34,6 +34,7 @@ func (DomainCheck) Describe() string {
 func (DomainCheck) Inputs() []string {
 	return []string{
 		"Asset",
+		"HorizonURL",
 		"Issuer",
 		"IssuerFetchedAt",
 		"IssuerLedger",
@@ -104,7 +105,7 @@ func (c DomainCheck) Run(_ context.Context, s *Subject) (Finding, error) {
 		acctLedger := s.issuerLedger()
 		f.Evidence = append(f.Evidence, Evidence{
 			Source:         "horizon",
-			URL:            horizonAccountURL(s.Asset.Issuer),
+			URL:            s.horizonAccountURL(s.Asset.Issuer),
 			Claim:          fmt.Sprintf("home_domain %q", domain),
 			RetrievedAt:    NewCanonicalTime(s.IssuerFetchedAt),
 			LatestLedger:   acctLedger,

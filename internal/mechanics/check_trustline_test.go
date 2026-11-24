@@ -120,6 +120,38 @@ func TestTrustlineDeauthorized(t *testing.T) {
 	}
 }
 
+// TestTrustlineMaintainLiabilities covers a trustline in the
+// authorized_to_maintain_liabilities state (CAP-0018): the holder cannot send
+// or receive but existing open offers remain active.
+func TestTrustlineMaintainLiabilities(t *testing.T) {
+	tl := &horizon.TrustlineBalance{
+		AssetCode: "TESTTKN", AssetIssuer: tlTestIssuer,
+		IsAuthorized:                      false,
+		IsAuthorizedToMaintainLiabilities: true,
+		IsClawbackEnabled:                 false,
+	}
+	f := runTL(t, tlSubject(tlTestHolder, tl, ""))
+
+	if f.Undetermined {
+		t.Fatal("maintain-liabilities trustline must not be undetermined")
+	}
+	if f.Mechanics&mechanics.MechTrustlineMaintainLiabilities == 0 {
+		t.Error("MechTrustlineMaintainLiabilities must be set for a maintain-liabilities trustline")
+	}
+	if f.Mechanics&mechanics.MechTrustlineDeauthorized != 0 {
+		t.Error("MechTrustlineDeauthorized must not be set for a maintain-liabilities trustline")
+	}
+	if f.Mechanics&mechanics.MechTrustlineClawbackEnabled != 0 {
+		t.Error("MechTrustlineClawbackEnabled must not be set when is_clawback_enabled=false")
+	}
+	if f.Severity != mechanics.Clear {
+		t.Errorf("trustline check must not set severity; got %v", f.Severity)
+	}
+	if !strings.Contains(f.Reasoning, "offers") && !strings.Contains(f.Reasoning, "liabilities") {
+		t.Errorf("maintain-liabilities reasoning must mention open offers or liabilities:\n%s", f.Reasoning)
+	}
+}
+
 // TestTrustlineHolderDoesNotHoldAsset: holder exists on the ledger but has no
 // trustline for this asset (scan.SubjectWithHolder leaves HolderTrustline nil
 // with no error when ErrNotFound is returned from the Horizon client).

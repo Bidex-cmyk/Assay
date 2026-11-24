@@ -108,11 +108,13 @@ number. There are three states, each with its own reasoning:
   given up, because `AUTH_IMMUTABLE_FLAG` cannot be cleared once set (CAP-0035
   makes all `AUTH_*` flags read-only). Locking does not make the power safer; it
   removes any future in which the issuer relinquishes it.
-- **Not locked** — the issuer may add freeze or confiscation later. Under
-  CAP-0035 a flag added later does not reach trustlines that already exist, but
-  it applies to any trustline opened after the change. This is the state a
-  prospective holder wants surfaced, because it is the one where today's `clear`
-  is not a durable answer.
+- **Not locked** — the issuer may add freeze or confiscation later. Adding
+  `auth_revocable` would immediately allow the issuer to freeze existing
+  trustlines; existing holders are exposed as soon as the flag is set. Adding
+  `auth_clawback_enabled` under CAP-0035 applies only to trustlines opened after
+  the change and does not reach trustlines that already exist. Either way this is
+  the state a prospective holder wants surfaced, because it is the one where
+  today's `clear` is not a durable answer.
 
 **Flag source.** The check reads the issuer flags from the same Horizon
 `/assets` record the `capability` check derives severity from, so the two

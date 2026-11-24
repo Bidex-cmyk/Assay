@@ -163,9 +163,14 @@ func (c ReputationCheck) Run(_ context.Context, s *Subject) (Finding, error) {
 	// They never escalate, but they are recorded so the vocabulary can be
 	// extended deliberately rather than an adverse tag being silently missed.
 	var unrecognised []string
+	// undeterminedSources collects the technical source keys for all sources
+	// that caused an undetermined outcome, set explicitly rather than parsed
+	// from Reasoning text.
+	var undeterminedSources []string
 
 	if s.DirectoryErr != "" {
 		unreachable = append(unreachable, "the curated directory")
+		undeterminedSources = append(undeterminedSources, "stellar.expert/directory")
 		f.Evidence = append(f.Evidence, Evidence{
 			Source: "stellar.expert/directory",
 			URL:    s.DirectoryURL,
@@ -186,8 +191,10 @@ func (c ReputationCheck) Run(_ context.Context, s *Subject) (Finding, error) {
 	}
 	if blockedSkipped != "" {
 		unasked = append(unasked, "the malicious-domain blocklist ("+blockedSkipped+")")
+		undeterminedSources = append(undeterminedSources, "stellar.expert/blocked-domains")
 	} else if s.BlockedErr != "" {
 		unreachable = append(unreachable, "the malicious-domain blocklist")
+		undeterminedSources = append(undeterminedSources, "stellar.expert/blocked-domains")
 		f.Evidence = append(f.Evidence, Evidence{
 			Source:      "stellar.expert/blocked-domains",
 			URL:         s.BlockedURL,
@@ -199,6 +206,7 @@ func (c ReputationCheck) Run(_ context.Context, s *Subject) (Finding, error) {
 
 	if s.ExpertAssetErr != "" {
 		unreachable = append(unreachable, "the asset metadata")
+		undeterminedSources = append(undeterminedSources, "stellar.expert/asset")
 		f.Evidence = append(f.Evidence, Evidence{
 			Source: "StellarExpert",
 			URL:    s.ExpertAssetURL,
@@ -389,6 +397,7 @@ func (c ReputationCheck) Run(_ context.Context, s *Subject) (Finding, error) {
 	// a missing answer from a missing question.
 	if len(unreachable) > 0 || len(unasked) > 0 {
 		f.Undetermined = true
+		f.UndeterminedSource = strings.Join(undeterminedSources, ",")
 		var gaps []string
 		if len(unreachable) > 0 {
 			gaps = append(gaps, joinPowers(unreachable)+

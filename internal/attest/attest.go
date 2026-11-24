@@ -196,52 +196,21 @@ var ErrUnknownProvenance = errors.New("attest: unknown provenance, attestation h
 var ErrScannerDowngrade = errors.New("attest: scanner version is below caller's minimum acceptable version")
 
 // VerifyVersion checks whether a recorded scanner version meets a caller's minimum version requirement.
-// An absent (empty) recorded version is reported as unknown provenance rather than silently accepted or invalidated.
+// An absent (empty) recorded version or unversioned build ("devel") is reported as unknown provenance
+// rather than silently accepted or invalidated. Malformed versions return an error.
 func VerifyVersion(recordedVersion string, minVersion string) (ProvenanceStatus, error) {
 	recorded := strings.TrimSpace(recordedVersion)
-	if recorded == "" {
+	if recorded == "" || recorded == "devel" {
 		return ProvenanceUnknown, ErrUnknownProvenance
 	}
-	if CompareVersions(recorded, minVersion) < 0 {
+	cmp, err := CompareVersions(recorded, minVersion)
+	if err != nil {
+		return ProvenanceInvalid, err
+	}
+	if cmp < 0 {
 		return ProvenanceInvalid, fmt.Errorf("%w: recorded %q < minimum %q", ErrScannerDowngrade, recorded, minVersion)
 	}
 	return ProvenanceValid, nil
-}
-
-// CompareVersions compares two semver version strings (e.g. "v1.0.0", "1.0.0", "v0.1.0").
-// It returns -1 if v1 < v2, 0 if v1 == v2, and 1 if v1 > v2.
-func CompareVersions(v1, v2 string) int {
-	clean1 := strings.TrimPrefix(strings.TrimSpace(v1), "v")
-	clean2 := strings.TrimPrefix(strings.TrimSpace(v2), "v")
-
-	parts1 := strings.Split(clean1, ".")
-	parts2 := strings.Split(clean2, ".")
-
-	maxLen := len(parts1)
-	if len(parts2) > maxLen {
-		maxLen = len(parts2)
-	}
-
-	for i := 0; i < maxLen; i++ {
-		var num1, num2 int
-		if i < len(parts1) {
-			if n, err := strconv.Atoi(parts1[i]); err == nil {
-				num1 = n
-			}
-		}
-		if i < len(parts2) {
-			if n, err := strconv.Atoi(parts2[i]); err == nil {
-				num2 = n
-			}
-		}
-		if num1 < num2 {
-			return -1
-		}
-		if num1 > num2 {
-			return 1
-		}
-	}
-	return 0
 }
 
 // ErrStale reports that the report is stale and cannot be attested as fresh.

@@ -90,8 +90,9 @@ Scanned 2026-09-05T06:55:53Z · attested 2026-08-15T05:26:51Z
 The issuer holds no authorization flags: it cannot freeze, confiscate, or gate
 this asset. The reasoning also states the converse, which matters — the flags
 are *not* locked (`auth_immutable` unset), so the issuer may add freeze or
-confiscation powers later. Under CAP-0035 that would not reach existing
-trustlines but would apply to any opened after the change.
+confiscation powers later. Adding `auth_revocable` would immediately expose
+existing trustlines to freeze; adding `auth_clawback_enabled` under CAP-0035
+would apply only to trustlines opened after the change.
 
 **`sep1-domain` → accountability verified.** `home_domain` is `aqua.network`,
 and that domain's `stellar.toml` `CURRENCIES` lists this exact code and issuer.

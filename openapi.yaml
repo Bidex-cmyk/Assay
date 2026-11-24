@@ -39,6 +39,26 @@ paths:
             not hold the asset, or whose trustline cannot be read, makes the
             report undetermined. An invalid value is a 400 before any fetch; an
             empty value is the same as omitting it. See docs/api.md.
+        - name: max_age_secs
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int64
+            minimum: 0
+            maximum: 2147483648
+          example: 0
+          description: >-
+            Optional upper bound, in seconds, on how old a reused StellarExpert
+            reputation answer (the curated directory and the domain blocklist)
+            may be. A cached answer fetched this long ago or longer is not
+            reused: the source is asked again. `0` means "do not reuse" and
+            forces a fresh fetch of both. It can only tighten the server's own
+            cache lifetime, never extend it, and omitting it keeps the server
+            default. Ledger (Horizon) reads are never cached and are
+            unaffected. `max_age` is accepted as an alias; if both are sent,
+            `max_age_secs` wins. A value that is not a non-negative integer is
+            a 400 (`invalid_param`). See docs/api.md and docs/caching.md.
       responses:
         '200':
           description: Successful scan report. May indicate degraded state via header.
@@ -55,7 +75,8 @@ paths:
         '400':
           description: >-
             Invalid request parameters (including a holder that is neither a
-            G... account nor an M... muxed account), or an asset identifier naming the
+            G... account nor an M... muxed account, or a max_age_secs that is
+            not a non-negative integer), or an asset identifier naming the
             network's native asset (native/XLM), which has no issuer and no
             authorization flags and is therefore never scanned or attested.
           content:
@@ -63,11 +84,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
         '404':
-          description: Asset not found on the ledger.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
         '502':
           description: Upstream scan failure.
           content:
@@ -121,10 +140,40 @@ paths:
                 $ref: '#/components/schemas/History'
         '400':
           description: Missing or invalid asset, or the network's native asset.
+  /api/v1/attestation:
+    get:
+      summary: Derive the attestation arguments and preimage for an asset
+      description: >-
+        Scans the asset and derives the exact arguments of an on-chain attest()
+        call, including the preimage bytes that evidence_hash commits to. Returns
+        attestable: false with a reason when the scan cannot be attested (undetermined,
+        unevaluated, stale, or partial check set).
+      parameters:
+        - name: asset
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Asset code and issuer (e.g. USDC-GA5Z...)
+      responses:
+        '200':
+          description: Attestation arguments, or a refusal reason when not attestable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Attestation'
+        '400':
+          description: Missing or invalid asset parameter.
+        '404':
+          description: Asset not found on the ledger.
+        '502':
+          description: Upstream scan failure.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
   /api/v1/events:
     get:
       summary: Server-sent events stream for capability, severity, and accountability transitions
@@ -147,6 +196,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
         '429':
           description: Too many concurrent SSE connections. Retry-After header gives seconds to wait.
           content:
@@ -208,11 +259,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
         '404':
-          description: Account not found on the ledger.
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
         '429':
           description: Rate limited. Retry-After header gives seconds to wait.
           content:
@@ -229,6 +278,13 @@ paths:
     get:
       summary: Scan outcome and per-source failure counters
       description: Counters accumulated since process start.
+      parameters:
+        - in: query
+          name: format
+          schema:
+            type: string
+            enum: [prometheus]
+          description: Request format (e.g. prometheus for Prometheus text exposition format).
       responses:
         '200':
           description: A snapshot of the counters.
@@ -236,6 +292,9 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Metrics'
+            text/plain; version=0.0.4:
+              schema:
+                type: string
   /healthz:
     get:
       summary: Liveness check
@@ -278,7 +337,77 @@ paths:
               schema:
                 type: string
 components:
+  responses:
+    NotFound:
+      description: >-
+        The requested API path or resource does not exist. Unknown /api/ paths
+        carry this shape, so a client decodes a 404 the same way as any other
+        API error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    MethodNotAllowed:
+      description: >-
+        The path exists but does not accept this HTTP method. The Allow header
+        names the methods it does accept.
+      headers:
+        Allow:
+          description: The methods the path accepts.
+          schema:
+            type: string
+          example: GET
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
   schemas:
+    Attestation:
+      type: object
+      description: >-
+        The body of GET /api/v1/attestation. When attestable is true, the caller
+        has the exact arguments of an on-chain attest() call. When false, reason
+        and error_kind explain what prevents attestation.
+      required: [attestable, severity, severity_name, flags, mechanics, evidence_hash, scanned_at]
+      properties:
+        attestable:
+          type: boolean
+        severity:
+          type: integer
+          description: Numeric severity (0=clear, 1=low, 2=medium, 3=high, 4=critical).
+        severity_name:
+          type: string
+        flags:
+          type: integer
+          description: The raw mechanic bitset.
+        mechanics:
+          type: array
+          items:
+            type: string
+        checks:
+          type: array
+          items:
+            type: string
+          description: Check IDs the scan ran; absent for pre-v2 reports.
+        network:
+          type: string
+          description: Full Stellar network passphrase; absent for pre-v3 reports.
+        evidence_hash:
+          type: string
+          description: Hex-encoded SHA-256 over the canonical preimage bytes.
+        scanned_at:
+          type: string
+          format: date-time
+        preimage:
+          type: string
+          description: The canonical preimage bytes as a human-readable string; absent for pre-v1 reports.
+        reason:
+          type: string
+          description: Why attestation was refused; present when attestable is false.
+        error_kind:
+          type: string
+          enum: [undetermined, unevaluated, stale, inconsistent, partial_check_set, scan_failed]
+          description: Machine-readable refusal kind; present when attestable is false.
     Error:
       type: object
       required: [error, code]
@@ -292,6 +421,8 @@ components:
             Stable machine-readable identifier for the error type.
             Consumers should branch on this field, not on the error message.
           enum:
+            - not_found
+            - method_not_allowed
             - missing_param
             - invalid_asset
             - invalid_holder
@@ -408,6 +539,12 @@ components:
           description: >-
             True when this check could not reach a conclusion because a source
             it depends on was unreachable — not the same as finding nothing.
+        undetermined_source:
+          type: string
+          description: >-
+            The source (or comma-joined sources) that caused this finding to be
+            undetermined. Set explicitly by each check; never derived from
+            Reasoning text.
         undetermined_by_source:
           type: object
           additionalProperties:

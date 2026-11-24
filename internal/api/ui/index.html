@@ -70,7 +70,9 @@
   .sev-clear { color: var(--clear); } .sev-low { color: var(--low); }
   .sev-medium { color: var(--medium); } .sev-high { color: var(--high); }
   .sev-critical { color: var(--critical); }
+  .sev-unevaluated { color: var(--muted); }
   .note { color: var(--muted); font-size: .85rem; margin-top: .4rem; }
+  .card.stale { border-style: dashed; border-color: var(--medium); }
 
   .finding { border: 1px solid var(--line); border-left: 3px solid var(--line);
              border-radius: 6px; padding: .8rem 1rem; margin-bottom: .7rem; }
@@ -85,6 +87,7 @@
   ul.evidence { list-style: none; padding: 0; margin: .6rem 0 0; font-size: .85rem; }
   ul.evidence li { padding: .3rem 0; border-top: 1px dashed var(--line); color: var(--muted); }
   ul.evidence .src { font-family: ui-monospace, monospace; color: var(--fg); }
+  ul.evidence .ev-age { font-size: .78rem; }
   a { color: var(--accent); }
   .err { border: 1px solid var(--critical); color: var(--critical);
          border-radius: 6px; padding: .8rem 1rem; margin-top: 1.5rem; }
@@ -121,8 +124,30 @@
   .transition { border-left: 3px solid var(--line); margin: .4rem 0 .4rem .8rem;
                 padding: .25rem .8rem; color: var(--muted); font-size: .85rem; }
   .transition.state-unknown, .transition.state-missing { border-left-color: var(--medium); color: var(--medium); }
+  .attest { border: 1px solid var(--line); border-radius: 8px; padding: 1rem;
+            background: var(--panel); margin-top: 1.5rem; overflow-wrap: anywhere; }
+  .attest > h2 { font-size: .72rem; text-transform: uppercase; letter-spacing: .09em;
+                 color: var(--muted); margin: 0 0 .5rem; font-weight: 700; }
+  .attest-refused { border-left: 4px solid var(--medium); padding: .3rem 0 .3rem .8rem;
+                    color: var(--medium); margin-top: .4rem; }
+  .attest-row { display: flex; gap: .5rem; margin: .25rem 0; font-size: .85rem; flex-wrap: wrap; align-items: baseline; }
+  .attest-key { color: var(--muted); flex-shrink: 0; min-width: 9rem; }
+  .attest-val { font-family: ui-monospace, monospace; word-break: break-all; }
+  .attest-preimage { font-family: ui-monospace, monospace; font-size: .78rem; white-space: pre-wrap;
+                     word-break: break-all; border: 1px solid var(--line); border-radius: 4px;
+                     padding: .6rem; background: var(--bg); margin-top: .5rem; }
   footer { margin-top: 2.5rem; color: var(--muted); font-size: .8rem;
            border-top: 1px solid var(--line); padding-top: 1rem; }
+  .optional { font-weight: 400; color: var(--muted); }
+  .input-error { border-color: var(--critical) !important; }
+  .input-error-msg { color: var(--critical); font-size: .8rem; margin: .25rem 0 0; }
+  .trustline-card { border: 1px solid var(--accent); border-left: 4px solid var(--accent);
+                    border-radius: 8px; padding: 1rem; background: var(--panel);
+                    margin-bottom: 1rem; }
+  .trustline-card h2 { font-size: .72rem; text-transform: uppercase; letter-spacing: .09em;
+                       color: var(--accent); margin: 0 0 .5rem; font-weight: 700; }
+  .trustline-holder { font-family: ui-monospace, monospace; font-size: .8rem;
+                      color: var(--muted); margin-top: .35rem; overflow-wrap: anywhere; }
 </style>
 </head>
 <body>
@@ -136,11 +161,18 @@
       <input id="asset" name="asset" spellcheck="false" autocomplete="off"
              placeholder="CODE-GISSUER…">
     </div>
+    <div class="field">
+      <label for="holder">Your account <span class="optional">(optional — G… address, 56 characters)</span></label>
+      <input id="holder" name="holder" spellcheck="false" autocomplete="off"
+             placeholder="GADDRESS… (optional)">
+    </div>
     <button id="go" type="submit">Scan</button>
   </form>
   <p class="examples">Try:
-    <button type="button" class="ex" data-a="USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN">USDC</button>
-    <button type="button" class="ex" data-a="AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA">AQUA</button>
+    <button type="button" class="ex" data-a="AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA">AQUA (clear)</button>
+    <button type="button" class="ex" data-a="USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN">USDC (medium)</button>
+    <button type="button" class="ex" data-a="USDZ-GAKTLPC4ZV37SSCITQ5IS5AQ4WPF4CF4VZJQPPAROSGXMYOATF5U6XPR">USDZ (high)</button>
+    <button type="button" class="ex" data-a="BERKSHIRE-GA22QHSHQEHDJS2ZOINSC77XPPQ24G5EFRJGVEIZLKC5FAW3PQ5XNSDQ">BERKSHIRE (critical)</button>
   </p>
 
   <div id="out" aria-live="polite"></div>
@@ -155,6 +187,7 @@
 <script>
 const out = document.getElementById('out');
 const input = document.getElementById('asset');
+const holderInput = document.getElementById('holder');
 const go = document.getElementById('go');
 
 const SEV_NOTE = {
@@ -163,6 +196,7 @@ const SEV_NOTE = {
   medium: 'The issuer can freeze an existing balance.',
   high: 'The issuer can confiscate an existing balance.',
   critical: 'Escalated by a curated malicious listing.',
+  unevaluated: 'The issuer authorization flags were never read. This is not a clean result.',
 };
 const ACC_NOTE = {
   verified: 'A named domain publicly claims this asset (reciprocal SEP-1).',
@@ -181,7 +215,7 @@ const CHECK_LABEL = {
   trustline: 'the holder trustline flags',
 };
 
-const LEVELS = ['clear', 'low', 'medium', 'high', 'critical'];
+const LEVELS = ['clear', 'low', 'medium', 'high', 'critical', 'unevaluated'];
 
 // el builds a node and sets only textContent, so no issuer-controlled string
 // ever reaches the parser. Assigning markup through an HTML-parsing sink
@@ -209,6 +243,21 @@ function safeURL(value) {
 }
 
 function note(text, cls) { return el('p', cls || 'note', text); }
+
+// ageStr computes a human-readable "N units before scan" string given an
+// evidence retrieved_at timestamp and the report's scanned_at. Returns null
+// when either value is unparseable or the retrieved_at is after scanned_at.
+function ageStr(retrievedAt, scannedAt) {
+  const r = new Date(retrievedAt);
+  const s = scannedAt ? new Date(scannedAt) : new Date();
+  if (isNaN(r.getTime())) return null;
+  const diffSec = Math.round((s.getTime() - r.getTime()) / 1000);
+  if (diffSec < 0) return null;
+  if (diffSec < 60) return diffSec + 's before scan';
+  if (diffSec < 3600) return Math.round(diffSec / 60) + 'm before scan';
+  if (diffSec < 86400) return Math.round(diffSec / 3600) + 'h before scan';
+  return Math.round(diffSec / 86400) + 'd before scan';
+}
 
 function checkLabel(id) {
   const name = String(id);
@@ -251,12 +300,17 @@ function fmtTime(value) {
 }
 
 // setURL keeps the address bar in step with the scan. A verdict is shareable as
-// a link, so every scan re-states the query it answered.
-function setURL(asset) {
+// a link, so every scan re-states the query it answered. The holder= param is
+// included when present so a deep link reproduces the full view.
+function setURL(asset, holder) {
   const url = new URL(window.location.href);
-  if (url.searchParams.get('asset') === asset) return;
   url.searchParams.set('asset', asset);
-  history.pushState({ asset: asset }, '', url);
+  if (holder) {
+    url.searchParams.set('holder', holder);
+  } else {
+    url.searchParams.delete('holder');
+  }
+  history.pushState({ asset: asset, holder: holder || '' }, '', url);
 }
 
 document.querySelectorAll('.ex').forEach(b =>
@@ -265,25 +319,60 @@ document.querySelectorAll('.ex').forEach(b =>
 document.getElementById('f').addEventListener('submit', e => { e.preventDefault(); scan(); });
 
 window.addEventListener('popstate', () => {
-  const asset = new URLSearchParams(window.location.search).get('asset');
-  if (asset) { input.value = asset; scan(); }
+  const params = new URLSearchParams(window.location.search);
+  const asset = params.get('asset');
+  const holder = params.get('holder') || '';
+  if (asset) { input.value = asset; holderInput.value = holder; scan(); }
 });
+
+// holderInputError shows or clears an error message below the holder input.
+function holderInputError(msg) {
+  let errEl = document.getElementById('holder-error');
+  if (msg) {
+    holderInput.classList.add('input-error');
+    if (!errEl) {
+      errEl = el('p', 'input-error-msg');
+      errEl.id = 'holder-error';
+      holderInput.parentNode.appendChild(errEl);
+    }
+    errEl.textContent = msg;
+  } else {
+    holderInput.classList.remove('input-error');
+    if (errEl) errEl.remove();
+  }
+}
 
 async function scan() {
   const asset = input.value.trim();
   if (!asset) return;
-  setURL(asset);
+  const holder = holderInput.value.trim();
+
+  // Client-side shape check: G... 56 characters. The server is authoritative.
+  if (holder && !/^G[A-Z2-7]{55}$/.test(holder)) {
+    holderInputError('Must be a G… address (G followed by 55 uppercase letters and digits 2–7).');
+    return;
+  }
+  holderInputError(null);
+
+  setURL(asset, holder);
   go.disabled = true;
   out.replaceChildren(note('Scanning…'));
   try {
-    const r = await fetch('/api/v1/scan?asset=' + encodeURIComponent(asset));
+    let url = '/api/v1/scan?asset=' + encodeURIComponent(asset);
+    if (holder) url += '&holder=' + encodeURIComponent(holder);
+    const r = await fetch(url);
     const body = await r.json();
     if (!r.ok) {
+      if (r.status === 400 && body.code === 'invalid_holder') {
+        holderInputError(body.error || 'Invalid holder address.');
+        out.replaceChildren();
+        return;
+      }
       out.replaceChildren(errorBox('Could not scan.', body.error,
         'This is not a safety result. Assay reports only what it fetched.'));
       return;
     }
-    await render(body, r.headers.get('X-Assay-Undetermined') === 'true', asset);
+    await render(body, r.headers.get('X-Assay-Undetermined') === 'true', asset, holder);
   } catch (err) {
     out.replaceChildren(errorBox('Request failed.', err.message));
   } finally {
@@ -291,7 +380,7 @@ async function scan() {
   }
 }
 
-async function render(rep, undeterminedHeader, asset) {
+async function render(rep, undeterminedHeader, asset, holder) {
   const frag = document.createDocumentFragment();
 
   if (rep.stale || rep.state === 'stale') {
@@ -305,6 +394,8 @@ async function render(rep, undeterminedHeader, asset) {
   const degraded = isUndetermined(rep, undeterminedHeader);
   if (degraded) frag.append(degradedPanel(rep));
 
+  if (holder) frag.append(trustlineCard(rep, holder));
+
   if (rep.network) frag.append(networkPanel(rep.network));
   if (Array.isArray(rep.clock_skews) && rep.clock_skews.length) {
     frag.append(clockSkewPanel(rep.clock_skews));
@@ -313,9 +404,31 @@ async function render(rep, undeterminedHeader, asset) {
   frag.append(axes(rep, degraded));
   frag.append(el('h2', null, 'Per-mechanic reasoning'));
   frag.append(findings(rep));
-  frag.append(await historySection(asset));
+
+  const [attestSec, historySec] = await Promise.all([
+    attestationSection(asset),
+    historySection(asset),
+  ]);
+  frag.append(attestSec);
+  frag.append(historySec);
 
   out.replaceChildren(frag);
+}
+
+// trustlineCard renders the trustline finding prominently above issuer findings.
+// When no trustline finding exists, it says so plainly.
+function trustlineCard(rep, holder) {
+  const card = el('section', 'trustline-card');
+  card.append(el('h2', null, 'Holder trustline'));
+  card.append(el('div', 'trustline-holder', 'Account: ' + String(holder)));
+
+  const list = (rep.findings || []).filter(f => f.check === 'trustline');
+  if (!list.length) {
+    card.append(el('p', 'note', 'No trustline finding returned for this holder.'));
+    return card;
+  }
+  for (const f of list) card.append(finding(f));
+  return card;
 }
 
 function networkPanel(network) {
@@ -388,6 +501,22 @@ function axes(rep, degraded) {
       'a source that did not answer could make the true level higher.'));
     sevCard.append(p);
   }
+  if (rep.severity === 'unevaluated') {
+    sevCard.classList.add('floor');
+    const p = el('p', 'note');
+    p.append(el('strong', null, 'Not evaluated.'), document.createTextNode(
+      ' The issuer authorization flags were never read. This is not the same as ' +
+      'clear — no capability statement exists for this asset.'));
+    sevCard.append(p);
+  }
+  if (rep.stale || rep.state === 'stale') {
+    sevCard.classList.add('stale');
+    const p = el('p', 'note');
+    p.append(el('strong', null, 'Stale.'), document.createTextNode(
+      ' This verdict was complete when made but is older than the freshness ' +
+      'policy window and cannot be relied on as a current answer.'));
+    sevCard.append(p);
+  }
   if (rep.escalated) {
     const p = el('p', 'note');
     p.append(document.createTextNode('Escalated from '));
@@ -414,11 +543,11 @@ function findings(rep) {
     wrap.append(note('No mechanics were found for this asset.'));
     return wrap;
   }
-  for (const f of list) wrap.append(finding(f));
+  for (const f of list) wrap.append(finding(f, rep.scanned_at));
   return wrap;
 }
 
-function finding(f) {
+function finding(f, scannedAt) {
   const box = el('div', 'finding ' + sevClass(f.severity));
 
   const head = el('div', 'head');
@@ -447,11 +576,65 @@ function finding(f) {
         a.rel = 'noopener noreferrer';
         li.append(a);
       }
+      if (ev.retrieved_at) {
+        const age = ageStr(ev.retrieved_at, scannedAt);
+        const label = age
+          ? 'Retrieved ' + age + ' — ' + fmtTime(ev.retrieved_at)
+          : 'Retrieved ' + fmtTime(ev.retrieved_at);
+        li.append(el('br'), el('span', 'ev-age', label));
+      }
       ul.append(li);
     }
     box.append(ul);
   }
   return box;
+}
+
+async function attestationSection(asset) {
+  const section = el('section', 'attest');
+  section.append(el('h2', null, 'Attestation arguments'));
+  try {
+    const r = await fetch('/api/v1/attestation?asset=' + encodeURIComponent(asset));
+    const body = await r.json();
+    if (!r.ok) {
+      section.append(note('Attestation unavailable: ' + String(body.error || r.status)));
+      return section;
+    }
+    renderAttestation(section, body);
+  } catch (err) {
+    section.append(note('Attestation unavailable: ' + String(err.message)));
+  }
+  return section;
+}
+
+function renderAttestation(section, a) {
+  if (!a.attestable) {
+    const refused = el('div', 'attest-refused');
+    refused.append(el('strong', null, 'Not attestable.'));
+    refused.append(document.createTextNode(' ' + String(a.reason || 'This scan cannot be attested on-chain.')));
+    section.append(refused);
+    return;
+  }
+
+  function attRow(key, value) {
+    const row = el('div', 'attest-row');
+    row.append(el('span', 'attest-key', key));
+    row.append(el('span', 'attest-val', String(value)));
+    section.append(row);
+  }
+
+  attRow('Severity', a.severity_name + ' (' + a.severity + ')');
+  attRow('Flags', '0x' + (a.flags >>> 0).toString(16).padStart(2, '0') + ' (' + a.flags + ')');
+  if (a.mechanics && a.mechanics.length) attRow('Mechanics', a.mechanics.join(', '));
+  if (a.checks && a.checks.length) attRow('Check set', a.checks.join(', '));
+  if (a.network) attRow('Network', a.network);
+  attRow('evidence_hash', a.evidence_hash);
+  attRow('scanned_at', a.scanned_at);
+
+  if (a.preimage) {
+    section.append(el('p', 'note', 'Preimage (the bytes hashed to produce evidence_hash):'));
+    section.append(el('pre', 'attest-preimage', a.preimage));
+  }
 }
 
 async function historySection(asset) {
@@ -549,8 +732,10 @@ function transitionNode(t) {
 }
 
 (function init() {
-  const asset = new URLSearchParams(window.location.search).get('asset');
-  if (asset) { input.value = asset; scan(); }
+  const params = new URLSearchParams(window.location.search);
+  const asset = params.get('asset');
+  const holder = params.get('holder') || '';
+  if (asset) { input.value = asset; holderInput.value = holder; scan(); }
 })();
 </script>
 </body>

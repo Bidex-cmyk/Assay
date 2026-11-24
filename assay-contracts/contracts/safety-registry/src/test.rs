@@ -104,6 +104,29 @@ fn stale_attestation_fails_closed() {
     assert!(client.is_safe(&asset, &SEVERITY_MEDIUM, &0));
 }
 
+/// The registry's deployed contract uses zero to opt out of freshness checks
+/// on every read gate. `assay_gate::check_policy` intentionally uses a strict
+/// zero-second window instead; the cross-API difference is documented in
+/// `docs/contract-interface.md`.
+#[test]
+fn zero_max_age_disables_freshness_across_registry_gates() {
+    let (env, client, admin) = setup();
+    let asset = Address::generate(&env);
+
+    env.ledger().set_timestamp(1_000);
+    client.attest(&asset, &SEVERITY_CLEAR, &0, &hash(&env));
+    env.ledger().set_timestamp(1_601);
+
+    assert!(client.is_safe(&asset, &SEVERITY_CLEAR, &0));
+    assert!(client.is_safe_masked(&asset, &0, &0));
+
+    match client.quorum(&asset, &vec![&env, admin.clone()], &1, &0) {
+        Quorum::Met(safety) => assert_eq!(safety.attested_at, 1_000),
+        other => panic!("expected stale attestation to count at zero age, got {other:?}"),
+    }
+    assert!(client.is_safe_quorum(&asset, &vec![&env, admin], &1, &SEVERITY_CLEAR, &0,));
+}
+
 #[test]
 fn attestation_from_the_future_does_not_underflow() {
     let (env, client, _) = setup();
@@ -2815,4 +2838,179 @@ fn quorum_cost_at_the_bound() {
         "instructions exceed 400 000 000"
     );
     assert!(r.mem_bytes <= 41_943_040, "memory exceeds 41 943 040");
+}
+
+// ---------------------------------------------------------------------------
+// quorum / is_safe_quorum must agree on who responds (#569)
+// ---------------------------------------------------------------------------
+
+/// Small seeded generator (splitmix64) so the property test is reproducible
+/// without a new dependency. A failing assertion prints the seed and case.
+struct SeededRng(u64);
+
+impl SeededRng {
+    fn next(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+
+    /// Uniform-ish value in `0..n` (`n > 0`).
+    fn below(&mut self, n: u64) -> u64 {
+        self.next() % n
+    }
+}
+
+#[test]
+fn quorum_and_is_safe_quorum_agree_on_responders_property() {
+    const SEED: u64 = 0x5EED_0569;
+    const CASES: u64 = 200;
+    const NOW: u64 = 10_000;
+    // Larger than MAX_ATTESTORS so the over-bound path is exercised too.
+    const POOL: usize = 20;
+
+    let (env, client, _admin) = setup();
+    env.ledger().set_timestamp(NOW);
+
+    let pool: std::vec::Vec<Address> = (0..POOL).map(|_| Address::generate(&env)).collect();
+    let mut rng = SeededRng(SEED);
+
+    for case in 0..CASES {
+        let ctx = std::format!("seed={SEED:#x} case={case}");
+        let asset = Address::generate(&env);
+        let max_age_secs = if rng.below(3) == 0 {
+            0
+        } else {
+            1 + rng.below(2_000)
+        };
+
+        // Store a random attestation (or none) for each pool member. Values are
+        // written directly, so any severity/flags/age combination is reachable.
+        // Half the ages sit within one second of `max_age_secs` so the exact
+        // freshness boundary is exercised, not just far-from-it values.
+        let mut stored: std::vec::Vec<Option<Safety>> = std::vec::Vec::new();
+        for att in pool.iter() {
+            if rng.below(4) == 0 {
+                stored.push(None);
+                continue;
+            }
+            let age = if max_age_secs > 0 && rng.below(2) == 0 {
+                (max_age_secs - 1 + rng.below(3)).min(NOW)
+            } else {
+                rng.below(2_001)
+            };
+            let safety = Safety {
+                severity: rng.below(5) as u32,
+                flags: rng.below(64) as u32,
+                evidence_hash: hash(&env),
+                attested_at: NOW - age,
+                preimage_version: 4,
+            };
+            env.as_contract(&client.address, || {
+                env.storage()
+                    .persistent()
+                    .set(&DataKey::Attestation(att.clone(), asset.clone()), &safety);
+            });
+            stored.push(Some(safety));
+        }
+
+        // Random attestor list, duplicates allowed, sometimes over the bound.
+        let len = rng.below(POOL as u64 + 1) as usize;
+        let mut picks: std::vec::Vec<usize> = std::vec::Vec::new();
+        let mut attestors = Vec::new(&env);
+        for _ in 0..len {
+            let idx = rng.below(POOL as u64) as usize;
+            picks.push(idx);
+            attestors.push_back(pool[idx].clone());
+        }
+        let threshold = rng.below(POOL as u64 + 2) as u32;
+        let ceiling = rng.below(5) as u32;
+
+        // Independent model of the rule.
+        let mut unique: std::vec::Vec<usize> = std::vec::Vec::new();
+        for i in picks.iter() {
+            if !unique.contains(i) {
+                unique.push(*i);
+            }
+        }
+        let in_bounds = threshold != 0
+            && threshold as usize <= unique.len()
+            && unique.len() <= MAX_ATTESTORS as usize;
+        let responders: std::vec::Vec<&Safety> = unique
+            .iter()
+            .filter_map(|i| stored[*i].as_ref())
+            .filter(|s| max_age_secs == 0 || NOW.saturating_sub(s.attested_at) <= max_age_secs)
+            .collect();
+        let count = responders.len() as u32;
+        let agg_severity = responders.iter().map(|s| s.severity).max().unwrap_or(0);
+        let agg_flags = responders.iter().fold(0u32, |f, s| f | s.flags);
+
+        // The shared routine itself counts what the model counts.
+        let shared = env.as_contract(&client.address, || {
+            SafetyRegistry::responding(&env, &asset, &attestors, threshold, max_age_secs)
+        });
+        match &shared {
+            None => assert!(!in_bounds, "responding rejected an in-bounds set; {ctx}"),
+            Some((n, list)) => {
+                assert!(in_bounds, "responding accepted an out-of-bounds set; {ctx}");
+                assert_eq!(*n, count, "responding count differs from model; {ctx}");
+                assert_eq!(list.len(), count, "responding list length differs; {ctx}");
+            }
+        }
+
+        let q = client.quorum(&asset, &attestors, &threshold, &max_age_secs);
+        let safe = client.is_safe_quorum(&asset, &attestors, &threshold, &ceiling, &max_age_secs);
+
+        // quorum reports the model's responder count wherever it reports one.
+        match &q {
+            Quorum::InvalidArguments => {
+                assert!(!in_bounds, "InvalidArguments for an in-bounds set; {ctx}");
+            }
+            Quorum::Unavailable(n) => {
+                assert!(in_bounds, "Unavailable for an out-of-bounds set; {ctx}");
+                assert_eq!(*n, count, "quorum Unavailable count; {ctx}");
+                assert!(count < threshold, "Unavailable with a quorum; {ctx}");
+            }
+            Quorum::Contested(n) => {
+                assert!(
+                    in_bounds && count >= threshold,
+                    "Contested without quorum; {ctx}"
+                );
+                assert_eq!(*n, count, "quorum Contested count; {ctx}");
+            }
+            Quorum::Met(s) => {
+                assert!(in_bounds && count >= threshold, "Met without quorum; {ctx}");
+                assert_eq!(s.severity, agg_severity, "Met severity; {ctx}");
+                assert_eq!(s.flags, agg_flags, "Met flags; {ctx}");
+            }
+        }
+        let has_quorum = matches!(q, Quorum::Met(_) | Quorum::Contested(_));
+
+        // is_safe_quorum counts the same responders: with the most permissive
+        // ceiling it is true exactly when quorum has a quorum.
+        let permissive = client.is_safe_quorum(
+            &asset,
+            &attestors,
+            &threshold,
+            &SEVERITY_CRITICAL,
+            &max_age_secs,
+        );
+        assert_eq!(permissive, has_quorum, "responder counts disagree; {ctx}");
+
+        // is_safe_quorum is true only when quorum is Met or Contested and the
+        // conservative aggregate is inside the ceiling.
+        let inside_ceiling = agg_severity <= ceiling
+            && !(agg_flags & CONFISCATION_MASK != 0 && ceiling < SEVERITY_HIGH);
+        if safe {
+            assert!(has_quorum, "safe without Met/Contested; {ctx}");
+            assert!(inside_ceiling, "safe outside the ceiling; {ctx}");
+        }
+        assert_eq!(
+            safe,
+            has_quorum && inside_ceiling,
+            "is_safe_quorum vs model; {ctx}"
+        );
+    }
 }

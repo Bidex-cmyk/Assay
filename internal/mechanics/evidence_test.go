@@ -1,10 +1,12 @@
 package mechanics_test
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 
+	"github.com/use-assay/assay/internal/horizon"
 	"github.com/use-assay/assay/internal/mechanics"
 )
 
@@ -78,6 +80,99 @@ func TestEvidenceUnmarshalJSONCompatibility(t *testing.T) {
 		}
 		if strings.Contains(string(marshaled), "latest_ledger") || strings.Contains(string(marshaled), "ledger_sequence") {
 			t.Errorf("zero ledger sequence should be omitted by omitempty: %s", string(marshaled))
+		}
+	})
+}
+
+func TestEvidenceURLsNetwork(t *testing.T) {
+	asset := mechanics.Asset{
+		Code:   "TEST",
+		Issuer: "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+	}
+
+	t.Run("pubnet default uses DefaultURL", func(t *testing.T) {
+		s := &mechanics.Subject{
+			Asset:   asset,
+			Network: horizon.PublicNet,
+			Stat:    &horizon.AssetStat{},
+			Issuer:  &horizon.Account{AccountID: asset.Issuer, Flags: horizon.Flags{AuthRevocable: true}},
+		}
+		f, err := mechanics.CapabilityCheck{}.Run(context.Background(), s)
+		if err != nil {
+			t.Fatalf("CapabilityCheck.Run: %v", err)
+		}
+		if len(f.Evidence) < 2 {
+			t.Fatalf("expected at least 2 evidence entries, got %d", len(f.Evidence))
+		}
+		for _, ev := range f.Evidence {
+			if !strings.HasPrefix(ev.URL, horizon.DefaultURL) {
+				t.Errorf("expected pubnet URL prefix %q, got %q", horizon.DefaultURL, ev.URL)
+			}
+		}
+	})
+
+	t.Run("testnet default uses DefaultTestnetURL", func(t *testing.T) {
+		s := &mechanics.Subject{
+			Asset:   asset,
+			Network: horizon.TestNet,
+			Stat:    &horizon.AssetStat{},
+			Issuer:  &horizon.Account{AccountID: asset.Issuer, Flags: horizon.Flags{AuthRevocable: true}},
+		}
+		f, err := mechanics.CapabilityCheck{}.Run(context.Background(), s)
+		if err != nil {
+			t.Fatalf("CapabilityCheck.Run: %v", err)
+		}
+		if len(f.Evidence) < 2 {
+			t.Fatalf("expected at least 2 evidence entries, got %d", len(f.Evidence))
+		}
+		for _, ev := range f.Evidence {
+			if !strings.HasPrefix(ev.URL, horizon.DefaultTestnetURL) {
+				t.Errorf("expected testnet URL prefix %q, got %q", horizon.DefaultTestnetURL, ev.URL)
+			}
+		}
+	})
+
+	t.Run("explicit HorizonURL is preferred", func(t *testing.T) {
+		const custom = "https://custom-horizon.example.com"
+		s := &mechanics.Subject{
+			Asset:      asset,
+			Network:    horizon.TestNet,
+			HorizonURL: custom,
+			Stat:       &horizon.AssetStat{},
+			Issuer:     &horizon.Account{AccountID: asset.Issuer, Flags: horizon.Flags{AuthRevocable: true}},
+		}
+		f, err := mechanics.CapabilityCheck{}.Run(context.Background(), s)
+		if err != nil {
+			t.Fatalf("CapabilityCheck.Run: %v", err)
+		}
+		if len(f.Evidence) < 2 {
+			t.Fatalf("expected at least 2 evidence entries, got %d", len(f.Evidence))
+		}
+		for _, ev := range f.Evidence {
+			if !strings.HasPrefix(ev.URL, custom) {
+				t.Errorf("expected custom URL prefix %q, got %q", custom, ev.URL)
+			}
+		}
+	})
+
+	t.Run("trustline check cites network horizon", func(t *testing.T) {
+		s := &mechanics.Subject{
+			Asset:      asset,
+			Network:    horizon.TestNet,
+			Holder:     "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+			HorizonURL: horizon.DefaultTestnetURL,
+		}
+		f, err := mechanics.TrustlineCheck{}.Run(context.Background(), s)
+		if err != nil {
+			t.Fatalf("TrustlineCheck.Run: %v", err)
+		}
+		if len(f.Evidence) == 0 {
+			t.Fatal("expected evidence")
+		}
+		for _, ev := range f.Evidence {
+			if !strings.HasPrefix(ev.URL, horizon.DefaultTestnetURL) {
+				t.Errorf("expected testnet URL prefix %q, got %q", horizon.DefaultTestnetURL, ev.URL)
+			}
 		}
 	})
 }

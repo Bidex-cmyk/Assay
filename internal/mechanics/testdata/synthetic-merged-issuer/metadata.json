@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "subject": "synthetic-merged-issuer",
+  "why": "synthetic fixture for a merged issuer account: asset record exists but /accounts returns 404; the capability check must be undetermined because the account flags cannot be corroborated, so the overall report is undetermined and cannot be attested",
+  "files": [
+    {"file": "asset.json", "url": "https://horizon.stellar.org/assets?asset_code=MRGE&asset_issuer=GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA", "captured": "2026-11-23"},
+    {"file": "account.404", "url": "https://horizon.stellar.org/accounts/GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA", "captured": "2026-11-23"},
+    {"file": "directory.json", "url": "https://api.stellar.expert/explorer/directory/GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA", "captured": "2026-11-23"}
+  ],
+  "expected": {
+    "state": "valid",
+    "base": "clear",
+    "severity": "clear",
+    "escalated": false,
+    "undetermined": true,
+    "accountability": "unknown",
+    "checks": {
+      "capability": {"undetermined": true},
+      "mutability": {"severity": "clear"},
+      "sep1-domain": {"severity": "clear", "mechanics": ["domain_unverified"]},
+      "reputation": {"undetermined": true}
+    }
+  }
+}

@@ -61,7 +61,9 @@
       "severity": "clear",
       "escalated": false,
       "accountability": "verified",
-      "mechanics": ["auth_immutable"],
+      "mechanics": [
+        "auth_immutable"
+      ],
       "capture_date": "2026-08-10",
       "source_urls": [
         "https://horizon.stellar.org/assets?asset_code=SHX&asset_issuer=GDSTRSHXHGJ7ZIVRBXEYE5Q74XUVCUSEKEBR7UCHEUUEK72N7I7KJ6JH",
@@ -97,7 +99,10 @@
       "severity": "high",
       "escalated": false,
       "accountability": "verified",
-      "mechanics": ["auth_revocable", "auth_clawback_enabled"],
+      "mechanics": [
+        "auth_revocable",
+        "auth_clawback_enabled"
+      ],
       "capture_date": "2026-09-27",
       "notes": "Confirmed-legitimate clawback control asset. Issuer verified independently via the zeam.money stellar.toml, which lists USDZ under [[CURRENCIES]] with matching issuer, and via the [DOCUMENTATION] block naming ZEAM LIMITED with FSCA (South Africa) licensing.",
       "source_urls": [
@@ -116,7 +121,10 @@
       "severity": "medium",
       "escalated": false,
       "accountability": "unverified",
-      "mechanics": ["auth_revocable", "domain_unverified"],
+      "mechanics": [
+        "auth_revocable",
+        "domain_unverified"
+      ],
       "capture_date": "2026-08-10",
       "source_urls": [
         "https://horizon.stellar.org/assets?asset_code=USDC&asset_issuer=GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
@@ -135,7 +143,12 @@
       "severity": "critical",
       "escalated": true,
       "accountability": "unverified",
-      "mechanics": ["auth_revocable", "auth_clawback_enabled", "domain_unverified", "blocklisted"],
+      "mechanics": [
+        "auth_revocable",
+        "auth_clawback_enabled",
+        "domain_unverified",
+        "blocklisted"
+      ],
       "capture_date": "2026-08-10",
       "source_urls": [
         "https://horizon.stellar.org/assets?asset_code=BERKSHIRE&asset_issuer=GA22QHSHQEHDJS2ZOINSC77XPPQ24G5EFRJGVEIZLKC5FAW3PQ5XNSDQ",
@@ -153,7 +166,10 @@
       "severity": "critical",
       "escalated": true,
       "accountability": "unverified",
-      "mechanics": ["domain_unverified", "blocklisted"],
+      "mechanics": [
+        "domain_unverified",
+        "blocklisted"
+      ],
       "capture_date": "2026-08-10",
       "source_urls": [
         "https://horizon.stellar.org/assets?asset_code=DOGE&asset_issuer=GA22IDJNHUMC3XKUCCBFNTQIJOUBWINC5GCXHLJ2V6KZ3OWAXCULNQ7P",
@@ -172,7 +188,9 @@
       "escalated": false,
       "undetermined": true,
       "accountability": "unverified",
-      "mechanics": ["domain_unverified"],
+      "mechanics": [
+        "domain_unverified"
+      ],
       "capture_date": "2026-08-10",
       "notes": "Same real asset as doge-noflags-scam, captured with the StellarExpert directory that carries its malicious tag unavailable. directory.err records the failure; the blocklist endpoint answered blocked=false, so the source that would have escalated is the one that failed. The honest verdict is undetermined, not clear (issue #23).",
       "source_urls": [
@@ -191,7 +209,9 @@
       "severity": "clear",
       "escalated": false,
       "accountability": "unknown",
-      "mechanics": ["domain_unverified"],
+      "mechanics": [
+        "domain_unverified"
+      ],
       "capture_date": "2026-09-28",
       "source_urls": [
         "https://horizon.stellar.org/assets?asset_code=VELO&asset_issuer=GDM4RQUQQUVSKQA7S6EM7XBZP3FCGH4Q7CL6TABQ7B2BEJ5ERARM2M5M",
@@ -207,7 +227,9 @@
       "severity": "clear",
       "escalated": false,
       "accountability": "unverified",
-      "mechanics": ["domain_unverified"],
+      "mechanics": [
+        "domain_unverified"
+      ],
       "capture_date": "2026-08-10",
       "notes": "Synthetic fixture exercising the cross-host redirect refusal rule (#380). The issuer advertises home_domain redirect.example, whose stellar.toml redirects to other.example, which is refused. Accountability is unverified and the report states the refused host.",
       "source_urls": [
@@ -226,7 +248,9 @@
       "severity": "low",
       "escalated": false,
       "accountability": "verified",
-      "mechanics": ["auth_required"],
+      "mechanics": [
+        "auth_required"
+      ],
       "capture_date": "2026-08-10",
       "notes": "Synthetic fixture exercising auth_required as a gating mechanism (#376). Derived from aqua-clear-verified with auth_required set to true in both asset and account records. The stellar.toml is unchanged, so domain verification still passes and accountability is verified.",
       "source_urls": [
@@ -245,7 +269,9 @@
       "severity": "clear",
       "escalated": false,
       "accountability": "unverified",
-      "mechanics": ["domain_unverified"],
+      "mechanics": [
+        "domain_unverified"
+      ],
       "capture_date": "2026-11-22",
       "notes": "Synthetic fixture proving the reciprocity rule refuses a code-only match (#379). The issuer's home_domain (impersonation.example) publishes a stellar.toml claiming AQUA under a different issuer. Claims() requires both code AND issuer, so accountability is unverified.",
       "source_urls": [
@@ -255,6 +281,23 @@
         "https://api.stellar.expert/explorer/directory/blocked-domains/impersonation.example",
         "https://api.stellar.expert/explorer/directory/GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
       ]
+    },
+    {
+      "fixture": "synthetic-merged-issuer",
+      "asset": "MRGE-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
+      "label": "undetermined",
+      "capture_date": "2026-11-23",
+      "notes": "Synthetic fixture for a merged issuer account: asset record exists but /accounts returns 404. The capability check is undetermined because the issuer account flags cannot be corroborated.",
+      "source_urls": [
+        "https://horizon.stellar.org/assets?asset_code=MRGE&asset_issuer=GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
+        "https://horizon.stellar.org/accounts/GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA",
+        "https://api.stellar.expert/explorer/directory/GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA"
+      ],
+      "base_severity": "clear",
+      "severity": "clear",
+      "escalated": false,
+      "accountability": "unknown",
+      "mechanics": []
     }
   ]
 }

@@ -23,6 +23,9 @@ import (
 // DefaultURL is the public Horizon instance for pubnet.
 const DefaultURL = "https://horizon.stellar.org"
 
+// DefaultTestnetURL is the public Horizon instance for testnet.
+const DefaultTestnetURL = "https://horizon-testnet.stellar.org"
+
 // ErrNotFound reports that Horizon has no record of the asset or account.
 var ErrNotFound = errors.New("horizon: not found")
 
@@ -243,6 +246,10 @@ type TrustlineBalance struct {
 	// IsAuthorized reports whether the issuer has authorized this trustline
 	// to transact (send and receive). An unauthorized trustline is frozen.
 	IsAuthorized bool `json:"is_authorized"`
+	// IsAuthorizedToMaintainLiabilities reports a partial freeze state
+	// (CAP-0018): the trustline cannot send or receive but existing open offers
+	// remain active. This is a SetTrustLineFlagsOp issued by the issuer.
+	IsAuthorizedToMaintainLiabilities bool `json:"is_authorized_to_maintain_liabilities"`
 	// IsClawbackEnabled reports whether the issuer's clawback power applies
 	// to this specific trustline. Under CAP-0035 this flag is fixed when the
 	// trustline is created: a holder who opened before the issuer set

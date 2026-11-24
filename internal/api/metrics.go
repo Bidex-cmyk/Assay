@@ -1,7 +1,12 @@
 package api
 
 import (
+	"fmt"
+	"io"
+	"mime"
 	"net/http"
+	"sort"
+	"strings"
 	"sync"
 )
 
@@ -100,11 +105,11 @@ type metricsBody struct {
 // handleMetrics serves GET /metrics: the counters this server has collected
 // since process start.
 //
-// It is a deliberate choice that this is JSON over the same HTTP surface as
-// everything else Assay serves: no backend was chosen (out of scope per the
-// issue), and any scraper can pick this up without this process gaining a
-// dependency or an export format decision it cannot take back.
-func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
+// By default, it returns JSON over the same HTTP surface as everything else Assay
+// serves. When requested via Accept: text/plain; version=0.0.4 or ?format=prometheus,
+// it renders the Prometheus text exposition format (version 0.0.4) using only the
+// standard library.
+func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	body := metricsBody{
 		ScanOutcomes:   map[string]uint64{},
 		SourceFailures: map[string]uint64{},
@@ -113,5 +118,69 @@ func (s *Server) handleMetrics(w http.ResponseWriter, _ *http.Request) {
 		body.ScanOutcomes = s.Metrics.OutcomeCounts()
 		body.SourceFailures = s.Metrics.SourceFailureCounts()
 	}
+	if wantsPrometheus(r) {
+		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		writePrometheusMetrics(w, body.ScanOutcomes, body.SourceFailures)
+		return
+	}
 	writeJSON(w, http.StatusOK, body)
+}
+
+func wantsPrometheus(r *http.Request) bool {
+	if r.URL.Query().Get("format") == "prometheus" {
+		return true
+	}
+	accept := r.Header.Get("Accept")
+	if accept == "" {
+		return false
+	}
+	for _, part := range strings.Split(accept, ",") {
+		mediaType, params, err := mime.ParseMediaType(strings.TrimSpace(part))
+		if err == nil && mediaType == "text/plain" && params["version"] == "0.0.4" {
+			return true
+		}
+	}
+	return false
+}
+
+func escapePrometheusLabelValue(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch r {
+		case '\\':
+			b.WriteString(`\\`)
+		case '"':
+			b.WriteString(`\"`)
+		case '\n':
+			b.WriteString(`\n`)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func writePrometheusMetrics(w io.Writer, outcomes, sourceFailures map[string]uint64) {
+	_, _ = fmt.Fprintln(w, "# HELP assay_scan_outcomes_total Scan results per outcome class.")
+	_, _ = fmt.Fprintln(w, "# TYPE assay_scan_outcomes_total counter")
+	classes := make([]string, 0, len(outcomes))
+	for c := range outcomes {
+		classes = append(classes, c)
+	}
+	sort.Strings(classes)
+	for _, c := range classes {
+		_, _ = fmt.Fprintf(w, "assay_scan_outcomes_total{class=\"%s\"} %d\n", escapePrometheusLabelValue(c), outcomes[c])
+	}
+
+	_, _ = fmt.Fprintln(w, "# HELP assay_source_failures_total Scans whose report recorded that source as not having answered.")
+	_, _ = fmt.Fprintln(w, "# TYPE assay_source_failures_total counter")
+	sources := make([]string, 0, len(sourceFailures))
+	for s := range sourceFailures {
+		sources = append(sources, s)
+	}
+	sort.Strings(sources)
+	for _, s := range sources {
+		_, _ = fmt.Fprintf(w, "assay_source_failures_total{source=\"%s\"} %d\n", escapePrometheusLabelValue(s), sourceFailures[s])
+	}
 }

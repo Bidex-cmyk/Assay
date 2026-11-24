@@ -2,12 +2,76 @@ package main
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/use-assay/assay/internal/eval"
 )
+
+func TestRunNothingToDo(t *testing.T) {
+	err := run(nil, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "nothing to do") {
+		t.Fatalf("got %v, want nothing-to-do error", err)
+	}
+}
+
+func TestOutRoundTripsThroughCompare(t *testing.T) {
+	fixtures := filepath.Join("..", "..", "internal", "mechanics", "testdata")
+	dir := t.TempDir()
+	record := filepath.Join(dir, "record.json")
+	var stdout bytes.Buffer
+
+	if err := run([]string{"-fixtures", fixtures, "-out", record}, &stdout); err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	stdout.Reset()
+	if err := run([]string{"-fixtures", fixtures, "-compare", record}, &stdout); err != nil {
+		t.Fatalf("compare: %v", err)
+	}
+	if strings.Contains(stdout.String(), "movement (") {
+		t.Fatalf("round trip reported movement:\n%s", stdout.String())
+	}
+}
+
+func TestStrictFailsWhenBaselineMoves(t *testing.T) {
+	fixtures := filepath.Join("..", "..", "internal", "mechanics", "testdata")
+	dir := t.TempDir()
+	record := filepath.Join(dir, "record.json")
+	var stdout bytes.Buffer
+	if err := run([]string{"-fixtures", fixtures, "-out", record}, &stdout); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutated := bytes.Replace(b, []byte(`"severity": "clear"`), []byte(`"severity": "high"`), 1)
+	if bytes.Equal(mutated, b) {
+		t.Fatal("test baseline did not contain a severity field to mutate")
+	}
+	if err := os.WriteFile(record, mutated, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	err = run([]string{"-fixtures", fixtures, "-compare", record, "-strict"}, &stdout)
+	if err == nil || !strings.Contains(err.Error(), "classifier output moved") {
+		t.Fatalf("got %v, want strict movement failure", err)
+	}
+}
+
+func TestConfusionPrintsSampleSizes(t *testing.T) {
+	fixtures := filepath.Join("..", "..", "internal", "mechanics", "testdata")
+	var stdout bytes.Buffer
+	if err := run([]string{"-fixtures", fixtures, "-confusion"}, &stdout); err != nil {
+		t.Fatalf("confusion: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "sample_size") {
+		t.Fatalf("confusion output omitted sample sizes:\n%s", stdout.String())
+	}
+}
 
 func TestPrintFixtureAgesFlagsSubjectsOlderThan90Days(t *testing.T) {
 	now := time.Date(2026, 11, 19, 8, 0, 0, 0, time.UTC)
