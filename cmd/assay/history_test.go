@@ -111,24 +111,27 @@ func TestHistoryRaw(t *testing.T) {
 
 func TestTransition(t *testing.T) {
 	cases := []struct {
+		name     string
 		finding  mechanics.Finding
 		evidence mechanics.Evidence
 		expected string
 	}{
-		{mechanics.Finding{Check: "reputation"}, mechanics.Evidence{Source: "stellar.expert/blocked-domains", Claim: `domain "blocked.example" blocked=false`}, "unknown"},
-		{mechanics.Finding{Check: "reputation"}, mechanics.Evidence{Source: "stellar.expert/blocked-domains", Claim: `domain "blocked.example" blocked=true`, Outcome: mechanics.EvidenceOutcomeBlocked}, "blocked"},
-		{mechanics.Finding{Check: "sep1-domain"}, mechanics.Evidence{Source: "horizon", Claim: `home_domain "payments.example"`}, "unknown"},
-		{mechanics.Finding{Check: "sep1-domain"}, mechanics.Evidence{Source: "stellar.toml", Claim: "not retrievable: status 429", Attempted: true}, "not retrievable"},
-		{mechanics.Finding{Check: "reputation"}, mechanics.Evidence{Source: "stellar.expert/directory", Claim: `listed as "Zeam.Money"`, Outcome: mechanics.EvidenceOutcomeListed}, "listed as"},
-		{mechanics.Finding{Check: "reputation"}, mechanics.Evidence{Source: "stellar.expert/directory", Claim: "malicious listing found", Outcome: mechanics.EvidenceOutcomeMalicious}, "malicious"},
-		{mechanics.Finding{Check: "reputation"}, mechanics.Evidence{Source: "stellar.expert/blocked-domains", Claim: `domain "blocked.example" blocked=true`}, "unknown"},
-		{mechanics.Finding{Check: "capability"}, mechanics.Evidence{Source: "stellar.expert/directory", Claim: "listed as malicious"}, "unknown"},
+		{"blocked=false claim is not a blocked transition", mechanics.Finding{Check: "reputation"}, mechanics.Evidence{Source: "stellar.expert/blocked-domains", Claim: `domain "blocked.example" blocked=false`}, "unknown"},
+		{"blocked=true with blocked outcome", mechanics.Finding{Check: "reputation"}, mechanics.Evidence{Source: "stellar.expert/blocked-domains", Claim: `domain "blocked.example" blocked=true`, Outcome: mechanics.EvidenceOutcomeBlocked}, "blocked"},
+		{"pay home domain does not read as a payment claim", mechanics.Finding{Check: "sep1-domain"}, mechanics.Evidence{Source: "horizon", Claim: `home_domain "payments.example"`}, "unknown"},
+		{"not retrievable claim from an attempted fetch", mechanics.Finding{Check: "sep1-domain"}, mechanics.Evidence{Source: "stellar.toml", Claim: "not retrievable: status 429", Attempted: true}, "not retrievable"},
+		{"listed outcome", mechanics.Finding{Check: "reputation"}, mechanics.Evidence{Source: "stellar.expert/directory", Claim: `listed as "Zeam.Money"`, Outcome: mechanics.EvidenceOutcomeListed}, "listed as"},
+		{"malicious outcome", mechanics.Finding{Check: "reputation"}, mechanics.Evidence{Source: "stellar.expert/directory", Claim: "malicious listing found", Outcome: mechanics.EvidenceOutcomeMalicious}, "malicious"},
+		{"blocked=true text without a structured outcome stays unknown", mechanics.Finding{Check: "reputation"}, mechanics.Evidence{Source: "stellar.expert/blocked-domains", Claim: `domain "blocked.example" blocked=true`}, "unknown"},
+		{"claim text from the wrong check stays unknown", mechanics.Finding{Check: "capability"}, mechanics.Evidence{Source: "stellar.expert/directory", Claim: "listed as malicious"}, "unknown"},
 	}
 
 	for _, tc := range cases {
-		if got := transition(tc.finding, tc.evidence); got != tc.expected {
-			t.Errorf("transition(%+v, %+v) = %q, want %q", tc.finding, tc.evidence, got, tc.expected)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			if got := transition(tc.finding, tc.evidence); got != tc.expected {
+				t.Errorf("transition(%+v, %+v) = %q, want %q", tc.finding, tc.evidence, got, tc.expected)
+			}
+		})
 	}
 }
 
