@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"errors"
-	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -101,7 +100,12 @@ func (s *Server) handleExposure(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, apiErr(codeMissingParam, "missing ?account=G... address"))
 		return
 	}
-	if err := scan.ValidateHolder(account); err != nil {
+	// A muxed (M…) holder names a virtual sub-account of a ledger account, so
+	// the listing is read from the base G… account it resolves to (SEP-23).
+	// ScanWithHolder below receives the original address, so each asset's
+	// trustline evidence still records the resolution.
+	baseAccount, _, _, err := scan.ParseHolder(account)
+	if err != nil {
 		writeJSON(w, http.StatusBadRequest, apiErr(codeInvalidHolder, err.Error()))
 		return
 	}
@@ -134,7 +138,7 @@ func (s *Server) handleExposure(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), exposureTimeout)
 	defer cancel()
 
-	trustlines, err := s.Scanner.Horizon.Trustlines(ctx, account)
+	trustlines, err := s.Scanner.Horizon.Trustlines(ctx, baseAccount)
 	if err != nil {
 		if errors.Is(err, horizon.ErrNotFound) {
 			writeJSON(w, http.StatusNotFound, apiErr(codeAccountNotFound, "account not found on the ledger"))
@@ -226,10 +230,7 @@ func (s *Server) exposureFor(ctx context.Context, account string, tl horizon.Tru
 // silently.
 func (s *Server) withExposureLimit(limiter *RateLimiter, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		key := r.RemoteAddr
-		if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-			key = host
-		}
+		key := s.ClientKey(r)
 		ok, retry := limiter.Allow(key)
 		if !ok {
 			secs := int64(retry / time.Second)
@@ -253,10 +254,7 @@ func (s *Server) withExposureLimit(limiter *RateLimiter, next http.HandlerFunc) 
 // User-Agent from a single client. A refused caller is told when to retry.
 func (s *Server) withScanLimit(limiter *RateLimiter, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		key := r.RemoteAddr
-		if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
-			key = host
-		}
+		key := s.ClientKey(r)
 		ok, retry := limiter.Allow(key)
 		if !ok {
 			secs := int64(retry / time.Second)

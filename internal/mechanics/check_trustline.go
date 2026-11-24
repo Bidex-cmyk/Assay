@@ -38,6 +38,26 @@ func (TrustlineCheck) Describe() string {
 		"auth_clawback_enabled flag. Does not affect severity."
 }
 
+// Inputs implements Check.
+//
+// The holder fields are the whole subject of this check; it reads no reputational
+// or capability source. HolderMuxed/HolderMuxedID are read only to state that a
+// muxed address was resolved to Holder, and Asset names the trustline it
+// describes.
+func (TrustlineCheck) Inputs() []string {
+	return []string{
+		"Asset",
+		"Holder",
+		"HolderMuxed",
+		"HolderMuxedID",
+		"HolderTrustline",
+		"HolderTrustlineErr",
+		"HolderFetchedAt",
+		"HolderAttemptedAt",
+		"HolderLedger",
+	}
+}
+
 // Run implements Check.
 func (c TrustlineCheck) Run(_ context.Context, s *Subject) (Finding, error) {
 	f := Finding{
@@ -53,9 +73,20 @@ func (c TrustlineCheck) Run(_ context.Context, s *Subject) (Finding, error) {
 
 	holderURL := horizon.DefaultURL + "/accounts/" + url.PathEscape(s.Holder)
 
+	// A muxed (M…) holder has no ledger entry of its own: the lookup is made
+	// against the base G… account it resolves to. Saying so in the evidence —
+	// rather than quietly reporting the base account's trustline — is what keeps
+	// the report honest about which account was actually read (issue #410).
+	holderNote := ""
+	if s.HolderMuxed != "" {
+		holderNote = fmt.Sprintf(
+			"holder address %s is muxed (multiplexing id %d); resolved to its base account %s. ",
+			s.HolderMuxed, s.HolderMuxedID, s.Holder)
+	}
+
 	if s.HolderTrustlineErr != "" {
 		f.Undetermined = true
-		f.Reasoning = fmt.Sprintf(
+		f.Reasoning = holderNote + fmt.Sprintf(
 			"Could not fetch trustline flags for holder %s: %s. "+
 				"This does not mean the holder is safe — it means the "+
 				"holder-specific answer is unknown.",
@@ -65,7 +96,7 @@ func (c TrustlineCheck) Run(_ context.Context, s *Subject) (Finding, error) {
 		f.Evidence = append(f.Evidence, Evidence{
 			Source: "horizon",
 			URL:    holderURL,
-			Claim:  "not retrievable: " + s.HolderTrustlineErr,
+			Claim:  holderNote + "not retrievable: " + s.HolderTrustlineErr,
 			// Fetch failed: attempt time, marked as an attempt.
 			RetrievedAt:    NewCanonicalTime(s.HolderAttemptedAt),
 			Attempted:      true,
@@ -76,11 +107,19 @@ func (c TrustlineCheck) Run(_ context.Context, s *Subject) (Finding, error) {
 	}
 
 	if s.HolderTrustline == nil {
-		f.Undetermined = true
-		f.Reasoning = fmt.Sprintf(
-			"Holder %s does not hold this asset: no trustline exists to inspect.",
-			s.Holder,
+		f.Reasoning = holderNote + fmt.Sprintf(
+			"Holder %s does not hold this asset: no trustline exists for %s-%s.",
+			s.Holder, s.Asset.Code, s.Asset.Issuer,
 		)
+		hLedger := s.holderLedger()
+		f.Evidence = append(f.Evidence, Evidence{
+			Source:         "horizon",
+			URL:            holderURL,
+			Claim:          holderNote + fmt.Sprintf("no trustline for asset %s-%s", s.Asset.Code, s.Asset.Issuer),
+			RetrievedAt:    NewCanonicalTime(s.HolderFetchedAt),
+			LatestLedger:   hLedger,
+			LedgerSequence: hLedger,
+		})
 		return f, nil
 	}
 
@@ -98,7 +137,7 @@ func (c TrustlineCheck) Run(_ context.Context, s *Subject) (Finding, error) {
 	f.Evidence = append(f.Evidence, Evidence{
 		Source: "horizon",
 		URL:    holderURL,
-		Claim: fmt.Sprintf(
+		Claim: holderNote + fmt.Sprintf(
 			"trustline %s-%s: is_clawback_enabled=%t is_authorized=%t",
 			tl.AssetCode, tl.AssetIssuer, tl.IsClawbackEnabled, tl.IsAuthorized,
 		),

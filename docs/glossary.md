@@ -158,6 +158,30 @@ The values are ABI: do not renumber them.
   [#32](https://github.com/use-assay/Assay/issues/32), the dependency of the
   issue that produced this page.
 
+### Worked examples — one asset per level
+
+A rule is easier to trust when a level can be checked against a capture. Each
+row cites the fixture under
+[`internal/mechanics/testdata/`](../internal/mechanics/testdata/PROVENANCE.md)
+that pins it, with the flags that put it there. The fixture paths are the
+re-fetchable record; the codes and issuers below are what those files contain.
+
+| Level | Asset | Flags observed | Why it lands there | Fixture |
+| --- | --- | --- | --- | --- |
+| `clear` (0) | `AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA` | none | No authorization flags, so no power over holders. Accountability is `verified` (aqua.network's toml claims it), and that still does not lower or raise severity — it is a separate axis. | [`aqua-clear-verified`](../internal/mechanics/testdata/aqua-clear-verified/) |
+| `low` (1) | `AQUA-GBNZILSTVQZ4R7IKQDGHYGY2QXL5QOFJYQMXPKWRRM5PAV7Y4M67AQUA` (synthetic, `auth_required` added) | `auth_required` only | The issuer decides who may open a trustline. It cannot freeze or confiscate an existing balance, so the highest single capability is `low`. The payload is labelled synthetic in its README; the AQUA toml still claims the asset, so accountability is `verified`. | [`synthetic-auth-required-gating`](../internal/mechanics/testdata/synthetic-auth-required-gating/) (labelled synthetic; see its README) |
+| `medium` (2) | `USDC-GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN` | `auth_revocable` | The issuer can freeze an existing holder's balance. Accountability is `unverified` because `circle.com/.well-known/stellar.toml` answers 404 — the freeze power is real either way, and accountability never discounts it. | [`usdc-revocable-regulated`](../internal/mechanics/testdata/usdc-revocable-regulated/) |
+| `high` (3) | `USDZ-GAKTLPC4ZV37SSCITQ5IS5AQ4WPF4CF4VZJQPPAROSGXMYOATF5U6XPR` | `auth_revocable` + `auth_clawback_enabled` | Clawback is the highest capability, so it sets `high`; revocable is a protocol precondition for it (CAP-0035) and is not added on top. It is not escalated: the issuer is directory-tagged `issuer`, not `malicious`/`unsafe`. | [`usdz-clawback-regulated`](../internal/mechanics/testdata/usdz-clawback-regulated/) |
+| `critical` (4) | `DOGE-GA22IDJNHUMC3XKUCCBFNTQIJOUBWINC5GCXHLJ2V6KZ3OWAXCULNQ7P` | none on the issuer | `base_severity` is `clear` and `severity` is `critical` with `escalated: true`: the blocklist contains `darkpool.digital`. This is the row that shows `critical` is a third party's determination, never a reading of flags. | [`doge-noflags-scam`](../internal/mechanics/testdata/doge-noflags-scam/) |
+| `unevaluated` (5, Go only) | — no asset can exist for it — | none readable | It is the value for "the ledger record was never read" (`Subject.Stat == nil`). A fixture cannot represent it honestly: every corpus subject has an `asset.json`, because a subject without one is a scan that never happened. Pinned instead by `TestFailClosedCapabilityOutageIsUnevaluatedNotClear`, and refused for attestation by `attest.FromReport`. | [`internal/mechanics/fail_closed_test.go`](../internal/mechanics/fail_closed_test.go) |
+
+Two things the table makes visible. First, everything from `low` to `high` is a
+statement about flags — the same numbers would apply to an anonymous issuer.
+Second, `critical` and `clear` can describe the same *capability*: the DOGE row's
+issuer holds no power at all, and the level comes entirely from someone else's
+claim about it. See [severity-model.md](severity-model.md) for why those stay
+two axes rather than one score.
+
 ## Accountability — who stands behind the power
 
 Accountability is reported beside severity and never folded into it

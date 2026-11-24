@@ -288,15 +288,80 @@ func TestScannerSubjectErrorMatrix(t *testing.T) {
 	}
 }
 
+// The SEP-23 test vectors: a published base account and two muxed addresses
+// built from it (ids 0 and 420). They are taken from the protocol
+// documentation rather than generated here, so the decoder is checked against
+// bytes other implementations already agree on.
+const (
+	muxedBaseAccount = "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJVSGZ"
+	muxedIDZero      = "MA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUAAAAAAAAAAAACJUQ"
+	muxedID420       = "MA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUAAAAAAAAAABUTGI4"
+)
+
 func TestValidateHolder(t *testing.T) {
 	if err := scan.ValidateHolder(holderIssuer); err != nil {
 		t.Errorf("ValidateHolder(valid) = %v", err)
 	}
-	for _, bad := range []string{"", "not-a-key", "gbrpyhil2ci3fnq4bxlfmndlfjunpu2hy3zmfshonuceoasw7qc7ox2h"} {
+	// An M… holder is accepted: it resolves to the same G… account the lookup
+	// is made against, so refusing it would refuse a real exchange address
+	// whose exposure is fully answerable (issue #410).
+	for _, m := range []string{muxedIDZero, muxedID420} {
+		if err := scan.ValidateHolder(m); err != nil {
+			t.Errorf("ValidateHolder(%q) = %v, want nil", m, err)
+		}
+	}
+	for _, bad := range []string{
+		"",
+		"not-a-key",
+		"gbrpyhil2ci3fnq4bxlfmndlfjunpu2hy3zmfshonuceoasw7qc7ox2h",
+		// An M… address whose checksum no longer matches must be refused, not
+		// resolved onto whichever account the remaining bytes spell.
+		muxedID420[:len(muxedID420)-1] + "5",
+	} {
 		if err := scan.ValidateHolder(bad); !errors.Is(err, scan.ErrBadHolder) {
 			t.Errorf("ValidateHolder(%q) error = %v, want ErrBadHolder", bad, err)
 		}
 	}
+}
+
+// TestParseHolderResolvesMuxed pins the M… → G… resolution the trustline check
+// depends on: the base account is the one SEP-23 says the address refers to,
+// and the multiplexing id is decoded from the payload rather than guessed.
+func TestParseHolderResolvesMuxed(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		id   uint64
+	}{
+		{"id zero", muxedIDZero, 0},
+		{"id 420", muxedID420, 420},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base, id, muxed, err := scan.ParseHolder(tc.in)
+			if err != nil {
+				t.Fatalf("ParseHolder(%q): %v", tc.in, err)
+			}
+			if !muxed {
+				t.Error("muxed = false for an M… address")
+			}
+			if base != muxedBaseAccount {
+				t.Errorf("base = %q, want %q", base, muxedBaseAccount)
+			}
+			if id != tc.id {
+				t.Errorf("id = %d, want %d", id, tc.id)
+			}
+		})
+	}
+
+	t.Run("plain G is passed through", func(t *testing.T) {
+		base, id, muxed, err := scan.ParseHolder(muxedBaseAccount)
+		if err != nil {
+			t.Fatalf("ParseHolder: %v", err)
+		}
+		if muxed || id != 0 || base != muxedBaseAccount {
+			t.Errorf("base = %q, id = %d, muxed = %t", base, id, muxed)
+		}
+	})
 }
 
 func TestScanReturnsReport(t *testing.T) {
@@ -364,6 +429,37 @@ func TestSubjectWithHolder(t *testing.T) {
 		}
 		if sub.HolderAttemptedAt.IsZero() {
 			t.Error("a failed holder fetch should record an attempt time")
+		}
+	})
+
+	t.Run("muxed holder resolves to its base account", func(t *testing.T) {
+		sc := newStubScanner(t, stubConfig{homeDomain: scanHomeDom, holderTrustline: true})
+		sub, err := sc.SubjectWithHolder(context.Background(), mustParse(t, "USDC-"+scanIssuer), muxedID420)
+		if err != nil {
+			t.Fatalf("SubjectWithHolder: %v", err)
+		}
+		// The lookup is made against the ledger account; the muxed address is
+		// kept so the report can say the resolution happened.
+		if sub.Holder != muxedBaseAccount {
+			t.Errorf("Holder = %q, want the base account %q", sub.Holder, muxedBaseAccount)
+		}
+		if sub.HolderMuxed != muxedID420 {
+			t.Errorf("HolderMuxed = %q, want %q", sub.HolderMuxed, muxedID420)
+		}
+		if sub.HolderMuxedID != 420 {
+			t.Errorf("HolderMuxedID = %d, want 420", sub.HolderMuxedID)
+		}
+		if sub.HolderTrustline == nil {
+			t.Fatal("HolderTrustline is nil for a muxed holder that holds the asset")
+		}
+	})
+
+	t.Run("malformed muxed holder is refused", func(t *testing.T) {
+		sc := newStubScanner(t, stubConfig{homeDomain: scanHomeDom})
+		_, err := sc.SubjectWithHolder(context.Background(), mustParse(t, "USDC-"+scanIssuer),
+			muxedID420[:len(muxedID420)-1]+"5")
+		if !errors.Is(err, scan.ErrBadHolder) {
+			t.Fatalf("error = %v, want ErrBadHolder", err)
 		}
 	})
 

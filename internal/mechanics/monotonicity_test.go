@@ -75,6 +75,7 @@ type fixedCheck struct{ finding mechanics.Finding }
 
 func (c fixedCheck) ID() string       { return c.finding.Check }
 func (c fixedCheck) Describe() string { return c.finding.Title }
+func (c fixedCheck) Inputs() []string { return nil }
 func (c fixedCheck) Run(context.Context, *mechanics.Subject) (mechanics.Finding, error) {
 	return c.finding, nil
 }

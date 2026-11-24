@@ -68,6 +68,20 @@ Lists are fetched in the order configured, one per scan, best-effort — a list
 that is down must not turn a dangerous asset into an error page — and each one's
 failure is recorded against that list alone.
 
+### Caching
+
+A fetched list is cached per process for `assetlist.DefaultTTL` (5 minutes,
+measured from the fetch that produced it), because a list is large, changes
+rarely, and would otherwise be re-downloaded on every scan that configures it —
+the same reasoning that led to caching StellarExpert's answers. The cache never
+re-stamps: a hit returns the list with its **original** `FetchedAt`, so the
+report's `retrieved_at` for that list still says when it was actually fetched.
+Expiry always means a re-fetch, and a failed fetch is never cached. The window
+is a documented Assay choice — no list advertises one — and a deployment can
+disable caching with `TTL: 0` on `assetlist.Options`, surfaced as
+`scan.Options.AssetListTTL`; `-no-cache` disables it too. See
+[caching.md](caching.md).
+
 ### Finding lists to configure
 
 - SEP-1 publishers advertise theirs from `stellar.toml` as `ASSET_LISTS = [...]`.

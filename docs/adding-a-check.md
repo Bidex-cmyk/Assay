@@ -39,6 +39,8 @@ type Check interface {
 	ID() string
 	// Describe states what the check concludes, and what it does not.
 	Describe() string
+	// Inputs names the Subject fields the check reads, by Go field name.
+	Inputs() []string
 	// Run classifies the subject.
 	Run(ctx context.Context, s *Subject) (Finding, error)
 }
@@ -47,6 +49,45 @@ type Check interface {
 `Describe()` must state the limits, not just the capability. "Says nothing about
 who the issuer is" is the kind of sentence that belongs there — it is what stops
 a caller over-reading the result.
+
+## Declare your inputs (#413)
+
+`Inputs()` lists the top-level `Subject` fields `Run` reads: `"Stat"`,
+`"Issuer"`, `"Toml"`, `"AssetLists"`, and so on. It is a declaration, not a
+sandbox — Go cannot stop `Run` from reading anything reachable from `*Subject` —
+but it is enforced by a test, and it is what makes two things explicit:
+
+- **Which sources the check depends on.** That is the same list that decides
+  *undetermined*: a check whose declared source failed is a check that could not
+  conclude.
+- **That severity stays capability-only.** Severity derives only from capability
+  checks, and that property is much easier to keep when each check's inputs are
+  written down next to it.
+
+Declare indirect reads too. A helper such as `s.HomeDomain()` reads
+`Issuer`; `s.DomainVerified()` reads `Asset`, `Issuer` **and** `Toml`. If `Run`
+consults `reconcileFlags`, both `Stat` and `Issuer` are inputs. The rule is
+"anything whose value can change this finding", not "fields named literally in
+this function".
+
+```go
+func (MyCheck) Inputs() []string {
+	return []string{"Asset", "Stat", "StatFetchedAt", "StatLedger"}
+}
+```
+
+The harness lives in
+[`internal/mechanics/inputs_test.go`](../internal/mechanics/inputs_test.go) and
+is behavioural rather than static: for every subject field your check does **not**
+declare, it builds one variant with that field populated and one with it zeroed,
+holding the declared fields fixed. If the finding changes, the test fails and
+names the field you forgot. Both a fully-populated subject and a degraded one
+(every best-effort source failed) are used, so a field you only read on the
+outage path is caught too. A deliberately leaky check in the same file proves
+the harness fires, so passing it means something.
+
+Corollary: if you start reading a new field, add it to `Inputs()` in the same
+change. The harness will tell you which one.
 
 ### What `Subject` gives you
 
@@ -345,7 +386,8 @@ make lint    # golangci-lint
 make fmt     # gofmt -w .
 ```
 
-- [ ] Check implements `ID`, `Describe`, `Run`; `Describe` states its limits
+- [ ] Check implements `ID`, `Describe`, `Inputs`, `Run`; `Describe` states its limits
+- [ ] `Inputs()` names every `Subject` field the check reads (directly or through a helper), and the harness in `internal/mechanics/inputs_test.go` passes
 - [ ] No I/O in `Run`; new data added to `Subject` via `internal/scan`
 - [ ] `nil` source fields handled; failures reported, not smoothed
 - [ ] Registered in `NewEngine()`

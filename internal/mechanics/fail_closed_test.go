@@ -26,6 +26,7 @@ type errCheck struct{}
 
 func (errCheck) ID() string       { return "failing-check" }
 func (errCheck) Describe() string { return "always fails" }
+func (errCheck) Inputs() []string { return nil }
 func (errCheck) Run(context.Context, *mechanics.Subject) (mechanics.Finding, error) {
 	return mechanics.Finding{}, errors.New("failing-check: source unreachable")
 }
@@ -120,7 +121,7 @@ func TestFailClosedFlagDisagreementResolvesAgainstTheHolder(t *testing.T) {
 	s := subject(func(s *mechanics.Subject) {
 		// The asset record says the issuer can claw back; the account record
 		// (stale or wrong) says nothing. The issuer can claw back.
-		s.Stat.Flags = horizon.Flags{AuthClawbackEnabled: true}
+		s.Stat.Flags = horizon.Flags{AuthClawbackEnabled: true, AuthRevocable: true}
 		s.Issuer.Flags = horizon.Flags{}
 	})
 	rep := run(t, s)

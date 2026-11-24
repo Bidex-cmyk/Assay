@@ -11,6 +11,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/use-assay/assay/internal/sac"
 )
 
 // The RPC here is a local httptest server replaying getHealth/getEvents
@@ -20,7 +22,7 @@ import (
 func testContractStrkey(fill byte) string {
 	payload := append([]byte{2 << 3}, bytes.Repeat([]byte{fill}, 32)...)
 	var sum [2]byte
-	binary.LittleEndian.PutUint16(sum[:], crc16(payload))
+	binary.LittleEndian.PutUint16(sum[:], sac.CRC16(payload))
 	return base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(append(payload, sum[:]...))
 }
 
@@ -98,7 +100,7 @@ func TestRegistryHistoryOrdersAttestAndRevokeAndReportsRetention(t *testing.T) {
 	defer srv.Close()
 
 	var out bytes.Buffer
-	err = runRegistryHistory([]string{"-rpc", srv.URL, "-contract", registry, "-json", sac}, commandDeps{stdout: &out})
+	err = runRegistryHistory([]string{"-registry-rpc", srv.URL, "-contract", registry, "-json", sac}, commandDeps{stdout: &out})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -72,15 +72,17 @@ dependent gate, and state plainly that the on-chain value remains present until
 a correction can be written. A consumer that reads the registry alone cannot
 discover this incident.
 
-The registry source now defines `revoke`, which withdraws the stored claim so
-gates fail closed. It is not available at the deployed registry because that
+The registry source now defines `revoke` and `revoke_many`, which withdraw stored
+claims so gates fail closed. They are not available at the deployed registry because that
 contract cannot be upgraded in place. After migration to a registry with
 `revoke` (see [deployment migration](deployment.md#migrating-to-a-registry-with-revoke)),
-revoke an invalid attestation when no verified replacement is ready; then
-attest the corrected result once it is reviewed. Revocation makes the current
-read return `None`; it does not preserve a tombstone in contract storage, so
-record the revoke transaction in the incident record. Do not imply revocation
-has happened until the deployed registry and transaction confirm it.
+revoke an invalid attestation when no verified replacement is ready — using `revoke`
+for a single asset or `revoke_many` for an entire affected batch (capped at 50, all-or-nothing
+so that a missing attestation leaves all standing claims untouched) — then attest the
+corrected result once it is reviewed. Revocation makes the current read return `None`;
+it does not preserve a tombstone in contract storage, so record the revoke transaction
+in the incident record. Do not imply revocation has happened until the deployed registry
+and transaction confirm it.
 
 ## Consumers and historical record
 

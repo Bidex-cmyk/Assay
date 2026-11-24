@@ -220,6 +220,21 @@ pub fn deposit(env: Env, asset: Address, from: Address, amount: i128) -> Result<
 }
 ```
 
+### Storage TTL and entry lifetime
+
+Soroban contract instances and persistent entries decay toward archival unless their time-to-live (TTL) is extended. Matching the safety registry's pattern ([deployment.md](deployment.md#entry-lifetime)), the example gate extends TTL on every write:
+- **Instance storage**: extended in the constructor and on `deposit` so gate configuration and contract code stay live as long as the gate is written to.
+- **Persistent storage**: extended on `deposit` for the holder's balance entry so active balances do not drift toward archival.
+
+```rust
+// Extend instance TTL to the network maximum
+let max = env.storage().max_ttl();
+env.storage().instance().extend_ttl(max, max);
+
+// Extend balance entry TTL on write
+env.storage().persistent().extend_ttl(&balance_key, max, max);
+```
+
 > [!WARNING]
 > **Bookkeeping-only demonstration:** The worked example in `contracts/example-gate`
 > only increments an internal balance counter (`storage().persistent()`) to demonstrate
@@ -259,6 +274,9 @@ pub fn __constructor(
     if max_severity > 4 {
         return Err(Error::InvalidPolicy);
     }
+    if refused_mechanics & !VALID_MECHANICS_MASK != 0 {
+        return Err(Error::InvalidPolicy);
+    }
     env.storage().instance().set(&DataKey::Registry, &registry);
     env.storage().instance().set(&DataKey::MaxSeverity, &max_severity);
     env.storage().instance().set(&DataKey::MaxAttestationAge, &max_age_secs);
@@ -266,6 +284,13 @@ pub fn __constructor(
     Ok(())
 }
 ```
+
+Validate both `max_severity` and `refused_mechanics` at construction.
+Rejecting bits outside the mechanic table (`MECH_AUTH_REQUIRED..=MECH_BLOCKLISTED`,
+bits 0 through 5) with `Error::InvalidPolicy` catches typos — such as `0x60`
+meant as `0x06` (`MECH_AUTH_REVOCABLE | MECH_CLAWBACK_ENABLED`) — that would
+otherwise refuse bits the registry never sets and silently leave the intended
+powers unblocked.
 
 ```sh
 stellar contract deploy \

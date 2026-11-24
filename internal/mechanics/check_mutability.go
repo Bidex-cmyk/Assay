@@ -58,6 +58,14 @@ func (MutabilityCheck) Describe() string {
 		"severity: auth_immutable is not a power over holders."
 }
 
+// Inputs implements Check.
+//
+// The flags are read through reconcileFlags, which compares the asset record's
+// copy against the issuer account's, so both are inputs.
+func (MutabilityCheck) Inputs() []string {
+	return []string{"Stat", "Issuer"}
+}
+
 // Run implements Check.
 func (c MutabilityCheck) Run(_ context.Context, s *Subject) (Finding, error) {
 	f := Finding{

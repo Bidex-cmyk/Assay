@@ -376,6 +376,7 @@ type stubCheck struct {
 
 func (s stubCheck) ID() string       { return s.id }
 func (s stubCheck) Describe() string { return s.id }
+func (s stubCheck) Inputs() []string { return nil }
 func (s stubCheck) Run(ctx context.Context, sub *mechanics.Subject) (mechanics.Finding, error) {
 	return mechanics.Finding{Check: s.id}, nil
 }
