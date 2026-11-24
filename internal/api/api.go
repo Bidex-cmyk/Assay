@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"strconv"
 	"sync"
@@ -59,6 +60,10 @@ type Server struct {
 	// EventsLimiter bounds concurrent SSE connections for GET /api/v1/events.
 	// When nil, Handler installs a default limiter.
 	EventsLimiter *EventsLimiter
+	// TrustedProxies contains the CIDRs of reverse proxies whose X-Forwarded-For
+	// headers are trusted for client key extraction in rate limiters.
+	// When empty, X-Forwarded-For is never trusted and RemoteAddr is used directly.
+	TrustedProxies []*net.IPNet
 	// eventsClients holds active SSE client channels.
 	eventsClients map[chan []byte]struct{}
 	// eventsMu protects eventsClients.

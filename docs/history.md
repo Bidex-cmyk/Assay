@@ -238,8 +238,9 @@ neither is visible from the JSON on disk:
 ### Bounds: two of them
 
 **Retention is a count, not a time window, and there are two bounds.** The
-per-asset cap is `history.DefaultRetention` — **256 observations per asset** —
-and the global cap is `history.DefaultMaxAssets` — **512 assets**. When either is
+per-asset cap is `history.DefaultRetention` — **256 observations per asset**,
+changed with `assay serve -history-retention N` — and the global cap is
+`history.DefaultMaxAssets` — **512 assets**. When either is
 exceeded, the oldest is evicted first: the oldest *observation* of that asset, or
 the asset whose most recent observation is oldest.
 

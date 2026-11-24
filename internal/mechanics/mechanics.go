@@ -326,7 +326,19 @@ type Subject struct {
 	// Holder is the account ID of a specific holder when per-trustline analysis
 	// was requested. Empty when no holder was specified; the trustline check is
 	// not run in that case and behavior is identical to a no-holder scan.
+	//
+	// When the caller supplied a muxed address (M…), Holder is the base G…
+	// account the muxed address resolves to, because a muxed account has no
+	// ledger entry of its own (SEP-23). HolderMuxed then carries the address the
+	// caller actually asked about, so the report can state the resolution.
 	Holder string
+	// HolderMuxed is the original M… address a caller supplied as the holder,
+	// when it was muxed. Empty for a plain G… holder. It is reported as
+	// attributed evidence by the trustline check and never affects severity.
+	HolderMuxed string
+	// HolderMuxedID is the 64-bit multiplexing id decoded from HolderMuxed. It
+	// is meaningful only when HolderMuxed is set.
+	HolderMuxedID uint64
 	// HolderTrustline is the holder's balance entry for this asset. Populated
 	// when Holder is non-empty and the holder holds the asset.
 	// HolderTrustlineErr records why it was not available.
@@ -475,6 +487,18 @@ type Check interface {
 	ID() string
 	// Describe states what the check concludes, and what it does not.
 	Describe() string
+	// Inputs names the Subject fields the check reads, by their Go field name
+	// (for example "Stat" or "Toml").
+	//
+	// It is a declaration, not a mechanism: Run can still read anything
+	// reachable from the Subject. What it buys is auditability and a test.
+	// Severity derives only from capability checks, and that property is easier
+	// to keep when each check's inputs are explicit; the list also documents
+	// which sources a check depends on, which is what decides undetermined
+	// (#413). A test in this package (TestChecksDeclareTheirInputs) fails when
+	// varying an undeclared field changes the check's finding, so the list
+	// cannot quietly go stale.
+	Inputs() []string
 	// Run classifies the subject.
 	Run(ctx context.Context, s *Subject) (Finding, error)
 }

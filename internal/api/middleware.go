@@ -21,7 +21,36 @@ import (
 // requestIDHeader is the response header the identifier is echoed in. It is
 // also accepted on input, so a caller that correlates across services can
 // supply its own and see this server use the same value.
+//
+// An inbound value is only accepted when it is 1 to requestIDMaxLen bytes of
+// [A-Za-z0-9._:-]; anything else is ignored and a fresh identifier generated.
+// The identifier is echoed in a response header and stamped on every log line
+// of the request, so an unbounded or arbitrary value would bloat the logs and
+// stop being a usable grep key.
 const requestIDHeader = "X-Request-Id"
+
+// requestIDMaxLen is the longest inbound identifier accepted. Correlation
+// needs a short opaque token, nothing longer.
+const requestIDMaxLen = 128
+
+// validRequestID reports whether an inbound identifier may be reused. Empty,
+// over-long, and out-of-charset values are rejected so the server falls back
+// to generating one.
+func validRequestID(id string) bool {
+	if len(id) == 0 || len(id) > requestIDMaxLen {
+		return false
+	}
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		switch {
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9':
+		case c == '.', c == '_', c == ':', c == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
 
 // requestIDLogKey names the structured field the request identifier rides on
 // in every log line this package emits.
@@ -48,14 +77,14 @@ func RequestID(ctx context.Context) string {
 // withObservability assigns the request identifier and makes it available
 // to the handler and to the logs.
 //
-// The identifier comes from the caller's header when one is offered and is
-// otherwise freshly generated — 16 random bytes, hex-encoded. Both forms are
-// logged the same way: the log line records what identified the request, not
-// who chose it.
+// The identifier comes from the caller's header when one is offered and
+// acceptable — see validRequestID — and is otherwise freshly generated:
+// 16 random bytes, hex-encoded. Both forms are logged the same way: the log
+// line records what identified the request, not who chose it.
 func (s *Server) withObservability(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.Header.Get(requestIDHeader)
-		if id == "" {
+		if !validRequestID(id) {
 			var b [16]byte
 			if _, err := rand.Read(b[:]); err != nil {
 				// A missing identifier degrades correlation; it must not
@@ -67,7 +96,12 @@ func (s *Server) withObservability(next http.Handler) http.Handler {
 			id = hex.EncodeToString(b[:])
 		}
 
-		logger := s.Log.With(requestIDLogKey, id)
+		clientKey := s.ClientKey(r)
+		baseLogger := s.Log
+		if baseLogger == nil {
+			baseLogger = slog.Default()
+		}
+		logger := baseLogger.With(requestIDLogKey, id, "client_key", clientKey)
 		ctx := r.Context()
 		ctx = context.WithValue(ctx, requestIDKey{}, id)
 		ctx = context.WithValue(ctx, loggerKey{}, logger)

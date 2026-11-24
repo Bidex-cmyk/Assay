@@ -1,10 +1,11 @@
 # Caching consumed signals
 
-Every scan consumes StellarExpert's curated directory and blocklist. Both are
-free, neither documents a request budget, and re-fetching an answer that has not
-changed is both slow and discourteous to a service Assay depends on — a
-rate-limit would degrade scans exactly when the tool is most used. So Assay
-caches them, with a bounded lifetime, per process.
+Every scan consumes StellarExpert's curated directory and blocklist, and every
+scan that configures a SEP-0042 asset list re-downloads that list. These are
+free, third-party-curated sources, none documents a request budget, and
+re-fetching an answer that has not changed is both slow and discourteous to a
+service Assay depends on — a rate-limit would degrade scans exactly when the
+tool is most used. So Assay caches them, with a bounded lifetime, per process.
 
 The hard part is not the cache. It is the timestamp.
 
@@ -67,6 +68,7 @@ is picked up on the next lookup instead of being masked by a stored 429.
 | --- | --- | --- |
 | Directory entry (SEP-0037) | 20 s | The window StellarExpert advertises (`Cache-Control: max-age=20`). Carries the `malicious`/`unsafe` tags that can escalate severity. |
 | Blocklist (`blocked-domains`) | 20 s | Same advertised window. Answers the most decisive question Assay asks, and has its own knob so a deployment can tighten it further. |
+| SEP-0042 asset list | 5 min | Lists are large, change rarely, and are fetched once per scan that configures them. No list advertises a freshness window, so this is a documented Assay choice rather than an operator's number. |
 | Horizon asset / account / trustline | **not cached** | See below. |
 | SEP-1 stellar.toml | not cached | The document a domain's own claim lives in; it is fetched once per scan either way. |
 
@@ -94,6 +96,34 @@ stay current**, in two places:
 So the default lifetime is exactly the advertised one and never longer: 20
 seconds of reuse, after which the answer is re-fetched. A deployment may set a
 shorter TTL, per source, or disable caching entirely with `-no-cache`.
+
+### Why asset lists get a longer window
+
+SEP-0042 lists are a different shape from StellarExpert's answers. An asset
+list is a whole curated catalogue — StellarExpert's Top 50 is a few tens of KB
+and larger catalogues are bigger — and a scan downloads the entire document to
+answer one question about one asset. The format also says plainly that an
+inclusion is *not* an endorsement, so a list is evidence only: it can neither
+raise nor lower severity, and a stale copy cannot misstate a capability the way
+a stale flag read would. That is what makes a five-minute window defensible
+where the ledger's is zero.
+
+Five minutes is **Assay's documented choice, not a number a list advertises**:
+no SEP-0042 list Assay consumes publishes a `Cache-Control` lifetime, so there
+is no operator statement to defer to. It is short enough that an asset added to
+a provider's list shows up while a deployment is still working, and long enough
+that `serve` scanning a handful of assets per minute does not re-download the
+same catalogue for each one. The window is bound by `assetlist.DefaultTTL` in
+[`internal/assetlist`](../internal/assetlist/assetlist.go), and a test pins the
+default to the constant.
+
+A cached list keeps its **original fetch time** in `List.FetchedAt`, and the
+scan layer copies that into `AssetListSignal.FetchedAt`; the report's
+`retrieved_at` for that list is therefore the time the list was retrieved, not
+the time the cache answered. Expiry means a re-fetch. A list that failed is
+never cached, so recovery is picked up on the next lookup. Set `TTL: 0` on
+`assetlist.Options` (exposed as `scan.Options.AssetListTTL`) to disable list
+caching entirely; `-no-cache` disables it alongside the reputation sources.
 
 The two knobs stay separate even though they default to the same number, because
 the blocklist is the safety-critical one. A cache can only ever *delay* an

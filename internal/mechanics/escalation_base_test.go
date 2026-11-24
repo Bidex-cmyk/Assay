@@ -15,6 +15,7 @@ type staticCheck struct {
 
 func (s staticCheck) ID() string       { return s.id }
 func (s staticCheck) Describe() string { return s.id }
+func (s staticCheck) Inputs() []string { return nil }
 func (s staticCheck) Run(ctx context.Context, sub *mechanics.Subject) (mechanics.Finding, error) {
 	return s.finding, nil
 }

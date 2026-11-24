@@ -156,6 +156,48 @@ func TestAssetListsAreFetchedAndAttributedPerList(t *testing.T) {
 	}
 }
 
+// Two scans through one Scanner reuse the fetched list (issue #408), and the
+// second report carries the ORIGINAL fetch time rather than the time the cache
+// served it. That is the same rule StellarExpert's answers follow: a hit never
+// re-stamps a claim.
+func TestAssetListsAreCachedAcrossScans(t *testing.T) {
+	fs := newFakeSources(t)
+	alpha, alphaHits := serveList(t, listBody("Alpha List", true), http.StatusOK)
+
+	sc := scan.New()
+	sc.Horizon.BaseURL = fs.horizon.URL
+	sc.Expert.BaseURL = fs.expert.URL
+	sc.Toml.HTTP.Transport = &singleHostTransport{host: strings.TrimPrefix(fs.toml.URL, "http://")}
+	sc.AssetListURLs = []string{alpha.URL}
+
+	first, err := sc.Subject(context.Background(), mustParse(t, "USDC-"+scanIssuer))
+	if err != nil {
+		t.Fatalf("first Subject: %v", err)
+	}
+	if len(first.AssetLists) != 1 {
+		t.Fatalf("want one signal, got %d", len(first.AssetLists))
+	}
+
+	// A second scan, well inside the default TTL.
+	second, err := sc.Subject(context.Background(), mustParse(t, "USDC-"+scanIssuer))
+	if err != nil {
+		t.Fatalf("second Subject: %v", err)
+	}
+	if *alphaHits != 1 {
+		t.Fatalf("the list was fetched %d times; a second scan inside the TTL should use the cache", *alphaHits)
+	}
+	if len(second.AssetLists) != 1 {
+		t.Fatalf("want one signal, got %d", len(second.AssetLists))
+	}
+	if !second.AssetLists[0].FetchedAt.Equal(first.AssetLists[0].FetchedAt) {
+		t.Errorf("cached list FetchedAt = %v, want the original fetch time %v",
+			second.AssetLists[0].FetchedAt, first.AssetLists[0].FetchedAt)
+	}
+	if second.AssetLists[0].Name != "Alpha List" || !second.AssetLists[0].Listed {
+		t.Errorf("a cached list lost its answer: %+v", second.AssetLists[0])
+	}
+}
+
 // The default: no list is configured, so the scanner consults none. This is
 // what keeps a plain scan identical to the reports produced before lists
 // existed — including every evidence_hash.

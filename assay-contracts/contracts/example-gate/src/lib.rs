@@ -29,8 +29,22 @@ use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, 
 // different ABI than the one deployed. `Safety` is not named below: it
 // arrives as the client's return type.
 use assay_gate::{
-    check_policy, PolicyViolation, SafetyRegistryClient, MECH_AUTH_REVOCABLE, MECH_CLAWBACK_ENABLED,
+    check_policy, PolicyViolation, SafetyRegistryClient, MECH_AUTH_REQUIRED, MECH_AUTH_REVOCABLE,
+    MECH_BLOCKLISTED, MECH_CLAWBACK_ENABLED, MECH_DOMAIN_UNVERIFIED, MECH_FLAGS_LOCKED,
 };
+
+/// The mask of all mechanic bits defined by Assay (bits 0 through 5:
+/// `MECH_AUTH_REQUIRED..=MECH_BLOCKLISTED`).
+///
+/// Any bit outside this mask is not a recognized mechanic. A constructor
+/// accepting bits outside this mask would allow typos (such as `0x60` meant as `0x06`)
+/// that silently fail to check the intended powers.
+pub const VALID_MECHANICS_MASK: u32 = MECH_AUTH_REQUIRED
+    | MECH_AUTH_REVOCABLE
+    | MECH_CLAWBACK_ENABLED
+    | MECH_FLAGS_LOCKED
+    | MECH_DOMAIN_UNVERIFIED
+    | MECH_BLOCKLISTED;
 
 /// Mechanics this gate refuses outright, whatever the severity number says.
 ///
@@ -159,6 +173,9 @@ impl ExampleGate {
         if max_severity > 4 {
             return Err(Error::InvalidPolicy);
         }
+        if refused_mechanics & !VALID_MECHANICS_MASK != 0 {
+            return Err(Error::InvalidPolicy);
+        }
 
         env.storage().instance().set(&DataKey::Registry, &registry);
         env.storage()
@@ -170,6 +187,7 @@ impl ExampleGate {
         env.storage()
             .instance()
             .set(&DataKey::RefusedMechanics, &refused_mechanics);
+        extend_instance(&env);
         Ok(())
     }
 
@@ -219,6 +237,8 @@ impl ExampleGate {
         let current: i128 = env.storage().persistent().get(&key).unwrap_or(0);
         let new_balance = current.checked_add(amount).ok_or(Error::BalanceOverflow)?;
         env.storage().persistent().set(&key, &new_balance);
+        extend_balance(&env, &key);
+        extend_instance(&env);
         Ok(())
     }
 
@@ -301,6 +321,20 @@ impl ExampleGate {
             PolicyViolation::IssuerCanTakeIt => Error::IssuerCanTakeIt,
         })
     }
+}
+
+/// Extends the contract instance's TTL to the network maximum. Extending the
+/// instance also extends the contract code entry, so the configuration and the
+/// wasm stay live as long as the gate is being written to.
+fn extend_instance(env: &Env) {
+    let max = env.storage().max_ttl();
+    env.storage().instance().extend_ttl(max, max);
+}
+
+/// Extends one balance entry's TTL to the network maximum.
+fn extend_balance(env: &Env, key: &DataKey) {
+    let max = env.storage().max_ttl();
+    env.storage().persistent().extend_ttl(key, max, max);
 }
 
 #[cfg(test)]

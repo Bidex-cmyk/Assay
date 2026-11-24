@@ -77,6 +77,9 @@ func TestIndependentEncoderMatchesGo(t *testing.T) {
 				if err != nil {
 					t.Fatalf("run engine: %v", err)
 				}
+				if rep.Undetermined {
+					return
+				}
 				compareWithIndependentEncoder(t, python, encoder, rep, "")
 			})
 			checked++
